@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.JsResult
@@ -49,6 +50,10 @@ class MainActivity : ComponentActivity() {
     pendingPickCallback = null
   }
 
+  companion object {
+    const val ACTION_UPDATE = "com.dshmobile.shell.action.UPDATE"
+  }
+
   private val notificationPermission =
     registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* test channel only */ }
 
@@ -61,7 +66,12 @@ class MainActivity : ComponentActivity() {
     root.addView(guideView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     setContentView(root)
     configureWebView()
-    startEngineFlow()
+    // Testable update trigger: adb am start -n .../.MainActivity -a com.dshmobile.shell.action.UPDATE
+    if (intent?.action == ACTION_UPDATE) {
+      runUpdate()
+    } else {
+      startEngineFlow()
+    }
   }
 
   override fun onResume() {
@@ -173,10 +183,19 @@ class MainActivity : ComponentActivity() {
       text = "重试"
       setOnClickListener { startEngineFlow() }
     }
+    val update = Button(this).apply {
+      text = "检查运行时更新"
+      setOnClickListener {
+        UpdateManager(this@MainActivity).checkAndApply { status ->
+          runOnUiThread { engineStatus.text = status }
+        }
+      }
+    }
     guide.addView(engineStatus)
     guide.addView(progressText)
     guide.addView(openTermux)
     guide.addView(retry)
+    guide.addView(update)
     return guide
   }
 
@@ -229,6 +248,8 @@ class MainActivity : ComponentActivity() {
       // Poll up to 30s for the web service.
       for (i in 0..30) {
         if (EngineProbe.check().optBoolean("running", false)) {
+          startEngineService()
+          applyShizukuKeepAlive()
           runOnUiThread { showWeb() }
           return@Thread
         }
@@ -242,6 +263,44 @@ class MainActivity : ComponentActivity() {
         engineFlowRunning.set(false)
       }
     }.start()
+  }
+
+  /** Run the runtime snapshot update; status mirrored to a file for adb verification. */
+  private fun runUpdate() {
+    val statusFile = java.io.File(filesDir, "update-status.txt")
+    val manager = UpdateManager(this)
+    manager.checkAndApply { status ->
+      runOnUiThread {
+        engineStatus.text = status
+        progressText.visibility = View.VISIBLE
+        guideView.visibility = View.VISIBLE
+        webView.visibility = View.GONE
+      }
+      try {
+        statusFile.appendText(status + "\n")
+      } catch (_: Exception) {
+      }
+    }
+  }
+
+  /** Start the foreground service (engine keep-alive + watchdog). */
+  private fun startEngineService() {
+    try {
+      startForegroundService(Intent(this, EngineService::class.java))
+    } catch (_: Exception) {
+      // Foreground-service start limits: service will start on next launch.
+    }
+  }
+
+  /** Best-effort Shizuku keep-alive boost; outcome logged only. */
+  private fun applyShizukuKeepAlive() {
+    try {
+      Thread {
+        val result = ShizukuSupport.status(this)
+        Log.i("dsh-shizuku", result)
+      }.start()
+    } catch (_: Throwable) {
+    }
   }
 
   private fun showWeb() {
