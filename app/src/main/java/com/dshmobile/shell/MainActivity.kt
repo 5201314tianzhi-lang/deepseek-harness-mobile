@@ -33,6 +33,9 @@ class MainActivity : ComponentActivity() {
   private lateinit var webView: WebView
   private lateinit var guideView: LinearLayout
   private lateinit var engineStatus: TextView
+  private lateinit var progressText: TextView
+  private val engineManager by lazy { EngineManager(this) }
+  private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
   private var pendingPickCallback: String? = null
   private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
@@ -58,12 +61,18 @@ class MainActivity : ComponentActivity() {
     root.addView(guideView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     setContentView(root)
     configureWebView()
-    probeAndRoute()
+    startEngineFlow()
   }
 
   override fun onResume() {
     super.onResume()
-    probeAndRoute()
+    // Back from the directory picker / Termux: re-route if the engine came up.
+    if (!EngineProbe.check().optBoolean("running", false)) startEngineFlow()
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    engineManager.stopEngine()
   }
 
   override fun onBackPressed() {
@@ -155,15 +164,17 @@ class MainActivity : ComponentActivity() {
       visibility = View.GONE
     }
     engineStatus = TextView(this).apply { textSize = 16f; setPadding(0, 0, 0, padding) }
+    progressText = TextView(this).apply { textSize = 13f; setPadding(0, 0, 0, padding); visibility = View.GONE }
     val openTermux = Button(this).apply {
       text = "打开 Termux"
       setOnClickListener { launchTermux() }
     }
     val retry = Button(this).apply {
       text = "重试"
-      setOnClickListener { probeAndRoute() }
+      setOnClickListener { startEngineFlow() }
     }
     guide.addView(engineStatus)
+    guide.addView(progressText)
     guide.addView(openTermux)
     guide.addView(retry)
     return guide
@@ -174,17 +185,61 @@ class MainActivity : ComponentActivity() {
     if (intent != null) startActivity(intent)
   }
 
-  private fun probeAndRoute() {
+  /**
+   * Engine-first flow: use an already-running engine (Termux or prior
+   * embedded), else extract the embedded snapshot and start the embedded
+   * engine, then poll until the web service answers.
+   */
+  private fun startEngineFlow() {
+    // onCreate 与随后的 onResume 都会触发本流程；in-flight 守卫防止
+    // 双线程竞态解压/启动（设备实证：双启动导致引擎进程死亡）。
+    if (!engineFlowRunning.compareAndSet(false, true)) return
     Thread {
-      val result = EngineProbe.check()
-      val running = result.optBoolean("running", false)
-      runOnUiThread {
-        if (running) {
-          showWeb()
-        } else {
-          engineStatus.text = "未检测到 dsh 引擎（127.0.0.1:3080）\n请先在 Termux 中启动服务。"
+      try {
+      if (EngineProbe.check().optBoolean("running", false)) {
+        runOnUiThread { showWeb() }
+        return@Thread
+      }
+      if (!engineManager.engineReady) {
+        runOnUiThread {
+          progressText.visibility = View.VISIBLE
+          guideView.visibility = View.VISIBLE
+          engineStatus.text = "首次启动：正在解压运行时（约 70MB）…"
+        }
+        val ok = engineManager.extractSnapshot { done, total ->
+          runOnUiThread {
+            engineStatus.text = "正在解压运行时… " + done / 1024 / 1024 + "/" + total / 1024 / 1024 + " MB"
+          }
+        }
+        if (!ok) {
+          runOnUiThread {
+            engineStatus.text = "运行时解压失败，请重试。"
+            showGuide()
+          }
+          return@Thread
+        }
+      }
+      if (!engineManager.startEngine()) {
+        runOnUiThread {
+          engineStatus.text = "引擎启动失败，请重试。"
           showGuide()
         }
+        return@Thread
+      }
+      // Poll up to 30s for the web service.
+      for (i in 0..30) {
+        if (EngineProbe.check().optBoolean("running", false)) {
+          runOnUiThread { showWeb() }
+          return@Thread
+        }
+        Thread.sleep(1000)
+      }
+      runOnUiThread {
+        engineStatus.text = "引擎启动超时，请重试。"
+        showGuide()
+      }
+      } finally {
+        engineFlowRunning.set(false)
       }
     }.start()
   }
@@ -192,6 +247,9 @@ class MainActivity : ComponentActivity() {
   private fun showWeb() {
     guideView.visibility = View.GONE
     webView.visibility = View.VISIBLE
+    // The WebView may have rendered an error page before the engine was
+    // ready (engine boot takes seconds); reload now that it answers.
+    webView.reload()
   }
 
   private fun showGuide() {

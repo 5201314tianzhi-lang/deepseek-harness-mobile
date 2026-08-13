@@ -15,6 +15,11 @@ android {
     versionName = "0.1.0"
   }
 
+  androidResources {
+    // snapshot.tar.xz is already xz-compressed; double-compressing it breaks openFd.
+    noCompress += "xz"
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false
@@ -32,4 +37,6 @@ android {
 
 dependencies {
   implementation("androidx.activity:activity-ktx:1.9.3")
+  implementation("org.apache.commons:commons-compress:1.27.1")
+  implementation("org.tukaani:xz:1.10")
 }
