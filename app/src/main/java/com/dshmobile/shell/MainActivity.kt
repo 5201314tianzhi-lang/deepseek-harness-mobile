@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.JsResult
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -52,9 +53,9 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     val root = FrameLayout(this)
     webView = WebView(this).apply { id = View.generateViewId() }
-    root.addView(webView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+    root.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     guideView = buildGuideView()
-    root.addView(guideView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+    root.addView(guideView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     setContentView(root)
     configureWebView()
     probeAndRoute()
