@@ -14,8 +14,8 @@ android {
     // (the embedded engine, bash, and every child command would need linker64
     // wrappers); 34 keeps native exec working on Android 15/16 devices.
     targetSdk = 34
-    versionCode = 2
-    versionName = "0.10.1"
+    versionCode = 3
+    versionName = "0.10.2"
   }
 
   androidResources {
@@ -27,6 +27,12 @@ android {
     release {
       isMinifyEnabled = false
     }
+  }
+
+  lint {
+    // 离线环境无 lint-gradle 依赖缓存（国内网络）；lint 非发布关键路径。
+    checkReleaseBuilds = false
+    abortOnError = false
   }
 
   compileOptions {
