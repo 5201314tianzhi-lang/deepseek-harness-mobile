@@ -3,13 +3,16 @@ package com.dshmobile.shell
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -27,32 +30,59 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationCompat
+import java.net.HttpURLConnection
+import java.net.URL
 
 /** Shell activity: WebView over the local dsh engine + engine guide fallback. */
 class MainActivity : ComponentActivity() {
 
   private lateinit var webView: WebView
   private lateinit var guideView: LinearLayout
+  /** 目录选择桥鉴权 token（每次进程启动随机；引擎 env + JS 桥同源持有）。 */
+  private val pickToken: String = java.util.UUID.randomUUID().toString()
   private lateinit var engineStatus: TextView
   private lateinit var progressText: TextView
-  private val engineManager by lazy { EngineManager(this) }
+  private val engineManager by lazy { EngineManager(this, pickToken) }
   private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
   private var pendingPickCallback: String? = null
   private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
   private val directoryPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-    if (uri != null && pendingPickCallback != null) {
-      val path = AndroidBridge.resolvePickedPath(uri)
-      webView.evaluateJavascript(
-        "window.__dshBridge?.onDirectoryPicked?.(" + jsString(pendingPickCallback!!) + ", " + jsString(path) + ")", null,
-      )
-    }
+    val callback = pendingPickCallback
     pendingPickCallback = null
+    if (callback != null) {
+      if (uri != null) {
+        val path = AndroidBridge.resolvePickedPath(uri)
+        webView.evaluateJavascript(
+          "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callback) + ", " + jsString(path) + ")", null,
+        )
+      } else {
+        // 用户取消：回传 null，让引擎侧 pick() 以取消结算（否则页面轮询
+        // 会继续拿到同一请求反复唤起选择器——设备实证的 picker 堆叠）。
+        webView.evaluateJavascript(
+          "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callback) + ", null)", null,
+        )
+      }
+    }
   }
 
   companion object {
     const val ACTION_UPDATE = "com.dshmobile.shell.action.UPDATE"
+
+    /** 导出文件大小上限（防恶意/异常大文件 OOM）。 */
+    const val MAX_DOWNLOAD_BYTES = 200L * 1024 * 1024
   }
+
+  // 文件上传（<input type=file> → WebView onShowFileChooser → 系统文件选择器）。
+  // 与目录选择（directoryPicker，工作区用）分离：多选、任意类型。
+  private val filePicker =
+    registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+      val callback = filePathCallback
+      filePathCallback = null
+      if (callback != null) {
+        callback.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
+      }
+    }
 
   private val notificationPermission =
     registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* test channel only */ }
@@ -95,10 +125,27 @@ class MainActivity : ComponentActivity() {
       domStorageEnabled = true
       allowFileAccess = false
       mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+      // prefers-color-scheme 跟随系统深色（某些厂商 WebView 默认不跟随；
+      // FORCE_DARK_AUTO 让 media query 反映系统深浅，dsh 的"跟随系统"主题依赖它）。
+      if (Build.VERSION.SDK_INT >= 29) {
+        @Suppress("DEPRECATION")
+        forceDark = WebSettings.FORCE_DARK_AUTO
+      }
     }
     webView.webViewClient = object : WebViewClient() {
       override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        view.loadUrl(request.url.toString())
+        val url = request.url.toString()
+        // 只允许引擎同源页面留在 WebView（特权桥 + 下载能力仅对引擎可信）；
+        // 外部链接交给系统浏览器，防止不可信页面获得桥能力（社工/通知轰炸/任意下载）。
+        if (url.startsWith(EngineProbe.ENGINE_URL)) {
+          view.loadUrl(url)
+          return true
+        }
+        try {
+          startActivity(Intent(Intent.ACTION_VIEW, request.url))
+        } catch (_: Exception) {
+          // 无浏览器可处理：忽略。
+        }
         return true
       }
 
@@ -106,13 +153,19 @@ class MainActivity : ComponentActivity() {
         if (failingUrl.startsWith(EngineProbe.ENGINE_URL)) showGuide()
       }
     }
+    // WebView 下载（会话日志导出等 <a download>）：拉到系统下载目录。
+    webView.setDownloadListener { url, _userAgent, contentDisposition, _mimeType, _contentLength ->
+      downloadToDownloads(url, contentDisposition)
+    }
     webView.webChromeClient = object : WebChromeClient() {
       override fun onShowFileChooser(
         webView: WebView, filePathCallback: ValueCallback<Array<Uri>>, fileChooserParams: FileChooserParams,
       ): Boolean {
+        // 文件上传走系统文件选择器（OpenDocument，可多选）；directoryPicker
+        // 是目录选择（工作区用），两者必须分离。
         this@MainActivity.filePathCallback?.onReceiveValue(null)
         this@MainActivity.filePathCallback = filePathCallback
-        directoryPicker.launch(null)
+        filePicker.launch(emptyArray())
         return true
       }
 
@@ -123,13 +176,157 @@ class MainActivity : ComponentActivity() {
     }
     webView.addJavascriptInterface(
       AndroidBridge(
-        onPickRequest = { callbackId -> pendingPickCallback = callbackId; directoryPicker.launch(null) },
+        onPickRequest = { callbackId -> pickDirectoryWithPermissionCheck(callbackId) },
         onKeepScreen = { enable -> keepScreenOn(enable) },
         onNotify = { title, text -> showTestNotification(title, text) },
+        onAllFilesAccessRequest = { openAllFilesAccessSettings() },
+        pickToken = pickToken,
       ),
       "androidBridge",
     )
     webView.loadUrl(EngineProbe.ENGINE_URL)
+  }
+
+  /**
+   * SAF 目录选择（带 All Files Access 引导）：外部工作区要求 bash 进程能
+   * 直接访问所选真实路径；无权限时先跳系统授权页并提示页面侧重试。
+   */
+  private fun pickDirectoryWithPermissionCheck(callbackId: String) {
+    // 并发保护：已有在途选择时拒绝新请求（单槽 pendingPickCallback 会被
+    // 覆盖导致前一个引擎 pick 永不结算——P2-8）。
+    if (pendingPickCallback != null) {
+      webView.evaluateJavascript(
+        "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", null)", null,
+      )
+      return
+    }
+    if (android.os.Build.VERSION.SDK_INT < 30) {
+      // Android 10 及以下无 All Files Access 模型：外部工作区不可用。
+      // 回传 null 让引擎侧 pick 以取消结算，不崩溃、不静默挂起。
+      webView.evaluateJavascript(
+        "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", null)", null,
+      )
+      showTestNotification("外部工作区不可用", "Android 10 及以下不支持选择外部目录")
+      return
+    }
+    if (android.os.Environment.isExternalStorageManager()) {
+      pendingPickCallback = callbackId
+      directoryPicker.launch(null)
+      return
+    }
+    openAllFilesAccessSettings()
+    webView.evaluateJavascript(
+      "window.__dshBridge?.onPermissionRequired?.()", null,
+    )
+  }
+
+  /** Open the system All Files Access screen for this app. */
+  private fun openAllFilesAccessSettings() {
+    if (android.os.Build.VERSION.SDK_INT < 30) return
+    try {
+      startActivity(
+        Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+          .setData(Uri.parse("package:$packageName")),
+      )
+    } catch (_: Exception) {
+      // Some OEMs lack the per-app screen; fall back to the global one.
+      try {
+        startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+      } catch (_: Exception) {
+        // 无任何可用入口：静默忽略（引擎侧会以取消结算）。
+      }
+    }
+  }
+
+  /**
+   * 下载引擎侧 URL 到系统下载目录（会话日志 ZIP 导出）。API 29+ 走
+   * MediaStore.Downloads（免权限）；更老系统不支持（实际设备均为新版本）。
+   * 仅接受引擎同源 URL（防本机 SSRF/恶意文件投放）；流式写入并设大小上限。
+   */
+  private fun downloadToDownloads(url: String, contentDisposition: String?) {
+    if (!url.startsWith(EngineProbe.ENGINE_URL)) {
+      showTestNotification("下载被拒绝", "仅支持从本机引擎导出文件")
+      return
+    }
+    if (Build.VERSION.SDK_INT < 29) {
+      showTestNotification("导出失败", "当前系统版本不支持下载，请升级到 Android 10+")
+      return
+    }
+    val filename = sanitizeFilename(parseDownloadFilename(url, contentDisposition))
+    Thread {
+      try {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 60_000
+        conn.requestMethod = "GET"
+        if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+          throw java.io.IOException("HTTP " + conn.responseCode)
+        }
+        var saved: String? = null
+        conn.inputStream.use { input ->
+          saved = saveToDownloadsStreamed(filename, input)
+        }
+        val finalName = saved
+        runOnUiThread { showTestNotification("会话日志已导出", "已保存到 下载/$finalName") }
+      } catch (t: Throwable) {
+        runOnUiThread { showTestNotification("导出失败", t.message ?: "未知错误") }
+      }
+    }.start()
+  }
+
+  /** 写入 MediaStore.Downloads（Android 10+ 免权限），流式 + 200MB 上限。 */
+  private fun saveToDownloadsStreamed(filename: String, input: java.io.InputStream): String {
+    val values = ContentValues().apply {
+      put(MediaStore.Downloads.DISPLAY_NAME, filename)
+      put(MediaStore.Downloads.MIME_TYPE, "application/zip")
+      put(MediaStore.Downloads.IS_PENDING, 1)
+      put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+    }
+    val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+      ?: throw java.io.IOException("无法创建下载文件")
+    try {
+      contentResolver.openOutputStream(uri)?.use { out ->
+        val buf = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+          val n = input.read(buf)
+          if (n < 0) break
+          total += n
+          if (total > MAX_DOWNLOAD_BYTES) throw java.io.IOException("导出文件过大")
+          out.write(buf, 0, n)
+        }
+      } ?: throw java.io.IOException("无法写入下载文件")
+      values.clear()
+      values.put(MediaStore.Downloads.IS_PENDING, 0)
+      contentResolver.update(uri, values, null, null)
+    } catch (t: Throwable) {
+      contentResolver.delete(uri, null, null)
+      throw t
+    }
+    return filename
+  }
+
+  /** 文件名净化：去路径分隔符/控制字符，限长。 */
+  private fun sanitizeFilename(name: String): String {
+    val cleaned = name.replace(Regex("[/\\\u0000-\u001f]"), "_").take(200)
+    return if (cleaned.isBlank()) "dsh-session-export.zip" else cleaned
+  }
+
+  /** 文件名：Content-Disposition 优先，退回 URL 的 sessionId，再退回固定名。 */
+  private fun parseDownloadFilename(url: String, contentDisposition: String?): String {
+    contentDisposition?.let { cd ->
+      Regex("filename=\"?([^\";]+)\"?").find(cd)?.groupValues?.get(1)?.let { return it }
+    }
+    return try {
+      val q = URL(url).query ?: ""
+      val sid = q.split("&").mapNotNull { seg ->
+        val kv = seg.split("=", limit = 2)
+        if (kv.size == 2 && kv[0] == "sessionId") kv[1] else null
+      }.firstOrNull()
+      if (sid != null) "dsh-session-$sid.zip" else "dsh-session-export.zip"
+    } catch (_: Exception) {
+      "dsh-session-export.zip"
+    }
   }
 
   private fun keepScreenOn(enable: Boolean) {
@@ -227,7 +424,8 @@ class MainActivity : ComponentActivity() {
         }
         val ok = engineManager.extractSnapshot { done, total ->
           runOnUiThread {
-            engineStatus.text = "正在解压运行时… " + done / 1024 / 1024 + "/" + total / 1024 / 1024 + " MB"
+            // done 是解压后字节数，total 是压缩包字节数，口径不一致；只显示已解压量。
+            engineStatus.text = "正在解压运行时… " + done / 1024 / 1024 + " MB"
           }
         }
         if (!ok) {
