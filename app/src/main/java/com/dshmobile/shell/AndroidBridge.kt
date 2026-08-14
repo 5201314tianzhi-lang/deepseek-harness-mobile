@@ -15,6 +15,8 @@ class AndroidBridge(
   private val onPickRequest: (callbackId: String) -> Unit,
   private val onKeepScreen: (enable: Boolean) -> Unit,
   private val onNotify: (title: String, text: String) -> Unit,
+  private val onAllFilesAccessRequest: () -> Unit = {},
+  private val pickToken: String? = null,
 ) {
 
   @JavascriptInterface
@@ -37,6 +39,24 @@ class AndroidBridge(
   fun pickDirectory(callbackId: String) {
     onPickRequest(callbackId)
   }
+
+  /** True when the app holds All Files Access (external workspace requirement). */
+  @JavascriptInterface
+  fun hasAllFilesAccess(): Boolean {
+    // isExternalStorageManager 仅 API 30+ 存在；低版本无该权限模型。
+    if (android.os.Build.VERSION.SDK_INT < 30) return false
+    return android.os.Environment.isExternalStorageManager()
+  }
+
+  /** Open the system screen granting All Files Access (special permission). */
+  @JavascriptInterface
+  fun requestAllFilesAccess() {
+    onAllFilesAccessRequest()
+  }
+
+  /** 目录选择桥的一次性会话 token（引擎侧 pick 端点校验；null = 未启用）。 */
+  @JavascriptInterface
+  fun getPickToken(): String? = pickToken
 
   companion object {
     /**
