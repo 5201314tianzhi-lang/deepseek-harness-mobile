@@ -257,7 +257,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
     val snapshotHook = File(usrDir, "lib/libtermux-exec-ld-preload.so")
     val preloadPath: String
     val termuxExecEnv: Map<String, String>
-    if (bundledHook.exists()) {
+    if (bundledHook != null) {
       preloadPath = bundledHook.absolutePath
       termuxExecEnv = emptyMap()
       AppLog.log("engine", "using bundled exec hook: " + bundledHook.absolutePath)
