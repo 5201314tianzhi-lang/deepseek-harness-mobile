@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="app_name">dsh</string>
+  <string name="app_name">DeepSeek Harness</string>
 
   <!-- Guide view -->
   <string name="button_open_termux">打开 Termux</string>

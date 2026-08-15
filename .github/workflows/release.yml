@@ -16,7 +16,16 @@ permissions:
 
 jobs:
   build:
+    name: Build (${{ matrix.abi }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            snapshot_asset: snapshot-arm64.tar.xz
+          - abi: x86_64
+            snapshot_asset: snapshot-x86_64.tar.xz
     steps:
       - uses: actions/checkout@v7
 
@@ -44,14 +53,15 @@ jobs:
             echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Download runtime snapshot from upstream releases
+      - name: Download runtime snapshot (${{ matrix.abi }}) from upstream releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p app/src/main/assets
           asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/latest \
-            --jq '.assets[] | select(.name == "snapshot-x86_64.tar.xz") | .url')
-          [ -n "$asset_url" ] || { echo "snapshot-x86_64.tar.xz not found upstream"; exit 1; }
+            --jq --arg n "${{ matrix.snapshot_asset }}" \
+            '.assets[] | select(.name == $n) | .url')
+          [ -n "$asset_url" ] || { echo "${{ matrix.snapshot_asset }} not found upstream"; exit 1; }
           curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
             "$asset_url" -o app/src/main/assets/snapshot.tar.xz
           ls -lh app/src/main/assets/snapshot.tar.xz
@@ -68,7 +78,35 @@ jobs:
           ./gradlew assembleRelease
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk "dsh-apk-${{ steps.tag.outputs.tag }}.apk"
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/dsh-apk-${{ steps.tag.outputs.tag }}-${{ matrix.abi }}.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: apk-${{ matrix.abi }}
+          path: dist/
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download APK artifacts
+        uses: actions/download-artifact@v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
 
       - name: Publish release
         uses: softprops/action-gh-release@v3.0.2
@@ -76,5 +114,7 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
           body: |
-            dsh Android shell APK ${{ steps.tag.outputs.tag }}
-          files: dsh-apk-${{ steps.tag.outputs.tag }}.apk
+            DeepSeek Harness Android shell APK ${{ steps.tag.outputs.tag }}
+            - arm64-v8a: for ARM64 phones/tablets
+            - x86_64: for x86_64 emulators (MuMu, LDPlayer, etc.)
+          files: dist/*.apk

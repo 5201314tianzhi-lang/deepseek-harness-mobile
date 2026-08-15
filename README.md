@@ -200,10 +200,16 @@ through the system picker).
 
 ## ABI & pagesize
 
-The x86_64 snapshot is verified end-to-end. arm64 snapshots are assembled from
-the official Termux aarch64 repo (see `docs/design.md` §ABI); a 16KB-page
-build must be produced on a 16KB device. APKs are per-ABI — the embedded
-snapshot is architecture-specific.
+Releases publish one APK per ABI (the embedded snapshot is architecture-
+specific):
+
+- **arm64-v8a** — for ARM64 phones/tablets (most real devices)
+- **x86_64** — for x86_64 emulators (MuMu, LDPlayer, etc.)
+
+The x86_64 snapshot is verified end-to-end; arm64 snapshots are assembled from
+the official Termux aarch64 repo (see `docs/design.md` §ABI). A 16KB-page build
+must be produced on a 16KB device. Choose the APK matching your device's ABI —
+installing the wrong one extracts fine but the engine cannot execute.
 
 ## Known limitations
 

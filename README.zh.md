@@ -171,9 +171,14 @@ SAF 目录选择无需权限（用户经系统选择器授权 tree URI）。
 
 ## ABI 与页大小
 
-x86_64 快照已端到端验证。arm64 快照由官方 Termux aarch64 源组装（见
-`docs/design.md` §ABI）；16KB 页构建必须在 16KB 设备上产出。APK 按 ABI 分发——
-内嵌快照与架构绑定。
+Release 按 ABI 各发布一个 APK（内嵌快照与架构绑定）：
+
+- **arm64-v8a** — ARM64 手机/平板（绝大多数真机）
+- **x86_64** — x86_64 模拟器（MuMu、雷电等）
+
+x86_64 快照已端到端验证；arm64 快照由官方 Termux aarch64 源组装（见
+`docs/design.md` §ABI）。16KB 页构建必须在 16KB 设备上产出。请选择与设备
+ABI 匹配的 APK——装错架构的包解压正常，但引擎无法执行。
 
 ## 已知限制
 
