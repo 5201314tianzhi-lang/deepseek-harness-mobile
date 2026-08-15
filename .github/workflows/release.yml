@@ -23,7 +23,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/latest \
+          asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/tags/v0.10.4 \
             --jq '.assets[] | select(.name == "snapshot-arm64.tar.xz") | .url')
           curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
             "$asset_url" -o snapshot.tar.xz
@@ -86,7 +86,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p app/src/main/assets
-          asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/latest \
+          asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/tags/v0.10.4 \
             --jq '.assets[] | select(.name == "${{ matrix.snapshot_asset }}") | .url')
           [ -n "$asset_url" ] || { echo "${{ matrix.snapshot_asset }} not found upstream"; exit 1; }
           curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
