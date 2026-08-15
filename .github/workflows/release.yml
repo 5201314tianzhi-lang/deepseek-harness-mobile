@@ -36,6 +36,9 @@ jobs:
           for m in t.getmembers():
               if m.name.endswith(wanted) or 'bin.js' in m.name:
                   print(f"{m.name}: mode={oct(m.mode)} size={m.size}")
+          for cand in ('usr/etc/tls/openssl.cnf', 'usr/etc/ssl/openssl.cnf', 'usr/etc/tls/openssl.cnf.dist'):
+              hit = [m for m in t.getmembers() if m.name == cand]
+              print(cand, "->", "FOUND mode=" + oct(hit[0].mode) if hit else "missing")
           total = sum(m.size for m in t.getmembers())
           print("entries:", len(t.getmembers()), "total bytes:", total)
           EOF

@@ -307,6 +307,12 @@ class EngineManager(private val context: Context, private val pickToken: String?
         // data is routed to public Documents/dshdata via migration + symlinks
         // and plugin configs (see ensureDshDataHome).
         "DSH_HOME" to ensureDshDataHome().absolutePath,
+        // OPENSSL_CONF: the snapshot's openssl library has the Termux build
+        // path (/data/data/com.termux/files/usr/etc/tls) compiled in, which is
+        // unreadable from this package — node aborts at startup when it cannot
+        // load the config (observed exit code 13). Point it at the config file
+        // shipped inside our own tree when present; otherwise leave it unset
+        // (OpenSSL tolerates a missing default config, not a broken OPENSSL_CONF).
         // os.tmpdir() falls back to the baked-in Termux tmp on Android
         // (unwritable from the app domain); keep spill inside filesDir.
         "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
@@ -323,7 +329,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
         // Auth token for the directory-pick bridge endpoint (validated by the
         // web-compat plugin as x-dsh-pick-token).
         "DSH_PICK_TOKEN" to (pickToken ?: ""),
-      ) + termuxExecEnv
+      ) + opensslConfEnv() + termuxExecEnv
       engineProcess = startWithArgs(args, env)
       // The cooldown is only set after a real start; a failed path does not
       // consume the window so a retry can happen immediately.
@@ -365,9 +371,26 @@ class EngineManager(private val context: Context, private val pickToken: String?
     }
   }
 
+  /** OPENSSL_CONF env override: point at the snapshot's own config when it
+   *  exists (the compiled-in Termux path is unreadable from this package).
+   *  Returns a single-entry map or an empty map. */
+  private fun opensslConfEnv(): Map<String, String> {
+    for (candidate in listOf(
+      "usr/etc/tls/openssl.cnf",
+      "usr/etc/ssl/openssl.cnf",
+    )) {
+      val f = File(usrDir, candidate)
+      if (f.isFile) {
+        AppLog.log("engine", "OPENSSL_CONF -> " + f.absolutePath)
+        return mapOf("OPENSSL_CONF" to f.absolutePath)
+      }
+    }
+    AppLog.log("engine", "no openssl.cnf found in snapshot; leaving OPENSSL_CONF unset")
+    return emptyMap()
+  }
+
   /** Stop the engine process (best-effort). */
-  fun stopEngine() {
-    EngineManager.engineProcess?.destroy()
+  fun stopEngine() {    EngineManager.engineProcess?.destroy()
     EngineManager.engineProcess = null
     // Reset the cooldown after a manual stop: the user returning to the
     // foreground should be allowed to restart immediately.
