@@ -10,3 +10,4 @@ token*
 *.pem
 *.p12
 .kotlin/
+log
