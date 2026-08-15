@@ -47,6 +47,12 @@ android {
       storePassword = System.getenv("RELEASE_STORE_PASSWORD") ?: "android"
       keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "release"
       keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: "android"
+      // AGP 9 disables v1 signing by default for minSdk >= 24; some OEM
+      // installers (Huawei/EMUI) reject v2-only APKs with "no certificate",
+      // so force v1 on for sideload compatibility.
+      enableV1Signing = true
+      enableV2Signing = true
+      enableV3Signing = true
     }
   }
 

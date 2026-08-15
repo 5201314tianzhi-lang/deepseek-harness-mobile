@@ -93,11 +93,23 @@ jobs:
             "$asset_url" -o app/src/main/assets/snapshot.tar.xz
           ls -lh app/src/main/assets/snapshot.tar.xz
 
-      - name: Generate CI signing key
+      - name: Get or create CI signing key
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          keytool -genkeypair -v -keystore release.keystore -alias release \
-            -keyalg RSA -keysize 2048 -validity 10000 -storepass android \
-            -keypass android -dname "CN=dsh-mobile, OU=ci, O=dsh, L=cn, S=cn, C=cn"
+          # Reuse the keystore persisted on the v0.1.0 release so every build
+          # shares one stable signature (overwrite-upgrade friendly); generate
+          # and upload it once on the first build.
+          if ! gh release download v0.1.0 -R "${{ github.repository }}" \
+              -p ci-release.keystore -D . --clobber 2>/dev/null; then
+            keytool -genkeypair -v -keystore release.keystore -alias release \
+              -keyalg RSA -keysize 2048 -validity 10000 -storepass android \
+              -keypass android -dname "CN=dsh-mobile, OU=ci, O=dsh, L=cn, S=cn, C=cn"
+            gh release upload v0.1.0 -R "${{ github.repository }}" release.keystore --clobber
+          else
+            cp ci-release.keystore release.keystore
+          fi
+          ls -la release.keystore
 
       - name: Build release APK
         run: |
