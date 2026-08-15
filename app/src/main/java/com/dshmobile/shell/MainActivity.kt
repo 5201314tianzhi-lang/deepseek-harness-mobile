@@ -674,6 +674,16 @@ class MainActivity : ComponentActivity() {
         }
         if (!reached) {
           AppLog.log("boot", "engine web service not reachable within 30s poll")
+          val proc = EngineManager.engineProcess
+          if (proc == null) {
+            AppLog.log("boot", "engine process: null")
+          } else if (!proc.isAlive) {
+            val code = try { proc.exitValue() } catch (_: Exception) { -1 }
+            AppLog.log("boot", "engine process DEAD exitValue=" + code)
+          } else {
+            AppLog.log("boot", "engine process alive but web service down")
+          }
+          AppLog.includeFile(java.io.File(filesDir, "engine.log"), "engine.log")
           runOnUiThread {
             engineStatus.text = getString(R.string.status_engine_timeout)
             showGuide()

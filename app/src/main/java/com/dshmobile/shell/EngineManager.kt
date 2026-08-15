@@ -96,6 +96,14 @@ class EngineManager(private val context: Context, private val pickToken: String?
   fun ensureDshDataHome(): File {
     val dshData = dshDataDir
     val privateDsh = File(homeDir, ".dsh")
+    // Android < 11 has no All Files Access model and the public Documents
+    // directory is unwritable (scoped storage); migration is impossible, so
+    // keep DSH_HOME fully private. Observed on Android 10 (Huawei): the
+    // migration used to fail with FileNotFoundException on every start.
+    if (android.os.Build.VERSION.SDK_INT < 30) {
+      AppLog.log("migrate", "skipped: Android < 11 (no All Files Access), public dshdata unwritable")
+      return privateDsh
+    }
     val marker = File(dshData, ".migrated-from")
     if (privateDsh.isDirectory) {
       if (marker.exists()) {
@@ -251,6 +259,11 @@ class EngineManager(private val context: Context, private val pickToken: String?
       AppLog.log("engine", "start refused: termux-exec preload missing at " + preload.absolutePath)
       return false
     }
+    // Executability diagnostics: an exec EACCES on the engine binary is the
+    // #1 cause of "engine start timeout". Record the actual permission bits.
+    AppLog.log("engine", "node.canExecute=" + nodeBin.canExecute() +
+      " preload.canExecute=" + preload.canExecute() +
+      " node.length=" + nodeBin.length() + " usr=" + usrDir.canRead() + "/" + usrDir.canExecute())
     val now = System.currentTimeMillis()
     // Process-level CAS: only one concurrent caller actually starts the engine
     // (device-observed EADDRINUSE on double start).
@@ -310,6 +323,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
     } catch (t: Throwable) {
       Log.e(TAG, "engine start failed", t)
       AppLog.log("engine", "start FAILED", t)
+      AppLog.includeFile(File(context.filesDir, "engine.log"), "engine.log")
       false
     } finally {
       STARTING.set(false)

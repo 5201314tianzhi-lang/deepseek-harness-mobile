@@ -60,7 +60,16 @@ object SnapshotExtractor {
           target.setReadable(true, true)
           target.setWritable(true, true)
           target.setExecutable(entry.mode and 0x40 != 0, true)
-          if (entry.mode and 0x40 != 0) execFiles.add(target.absolutePath)
+          if (entry.mode and 0x40 != 0) {
+            // Fallback: the exec bit must survive extraction — an exec EACCES
+            // on the engine binary shows up as "engine start timeout". If the
+            // bit was lost (tar mode/PAX quirks), force it for all users.
+            if (!target.canExecute()) {
+              target.setExecutable(true, false)
+              AppLog.log("extract", "exec bit was lost, forced: " + target.name)
+            }
+            execFiles.add(target.absolutePath)
+          }
         }
       }
       done += entry.size

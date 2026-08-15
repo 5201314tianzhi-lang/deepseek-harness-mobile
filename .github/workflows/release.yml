@@ -15,6 +15,31 @@ permissions:
   contents: write
 
 jobs:
+  diagnose-snapshot:
+    name: Diagnose snapshot file modes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download arm64 snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/latest \
+            --jq '.assets[] | select(.name == "snapshot-arm64.tar.xz") | .url')
+          curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+            "$asset_url" -o snapshot.tar.xz
+      - name: Inspect key file modes
+        run: |
+          python3 - <<'EOF'
+          import tarfile
+          t = tarfile.open('snapshot.tar.xz', 'r:xz')
+          wanted = ('usr/bin/node', 'usr/bin/bash', 'usr/lib/libtermux-exec-ld-preload.so')
+          for m in t.getmembers():
+              if m.name.endswith(wanted) or 'bin.js' in m.name:
+                  print(f"{m.name}: mode={oct(m.mode)} size={m.size}")
+          total = sum(m.size for m in t.getmembers())
+          print("entries:", len(t.getmembers()), "total bytes:", total)
+          EOF
+
   build:
     name: Build (${{ matrix.abi }})
     runs-on: ubuntu-latest

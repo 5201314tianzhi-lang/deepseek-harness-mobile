@@ -64,6 +64,28 @@ object AppLog {
     return text
   }
 
+  /** Include the tail of a file (e.g. engine.log) in the diagnostic log. */
+  fun includeFile(file: File, label: String, maxBytes: Int = 4096) {
+    try {
+      if (!file.exists()) {
+        log("file", label + ": <missing>")
+        return
+      }
+      var content = file.readText()
+      if (content.length > maxBytes) {
+        content = "...[truncated, " + content.length + " chars]...\n" + content.takeLast(maxBytes)
+      }
+      val trimmed = content.trimEnd()
+      if (trimmed.isEmpty()) {
+        log("file", label + ": <empty>")
+      } else {
+        log("file", label + ":\n" + trimmed)
+      }
+    } catch (t: Throwable) {
+      log("file", label + ": read failed — " + (t.message ?: t.javaClass.simpleName))
+    }
+  }
+
   private fun timestamp(): String =
     SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
 
