@@ -38,7 +38,8 @@ class MainActivity : ComponentActivity() {
 
   private lateinit var webView: WebView
   private lateinit var guideView: LinearLayout
-  /** 目录选择桥鉴权 token（每次进程启动随机；引擎 env + JS 桥同源持有）。 */
+  /** One-time auth token for the directory-pick bridge (random per process
+   *  start; held in the engine env and the JS bridge). */
   private val pickToken: String = java.util.UUID.randomUUID().toString()
   private lateinit var engineStatus: TextView
   private lateinit var progressText: TextView
@@ -46,6 +47,16 @@ class MainActivity : ComponentActivity() {
   private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
   private var pendingPickCallback: String? = null
   private var filePathCallback: ValueCallback<Array<Uri>>? = null
+  /** Screen-on wake lock: reuse a single instance (I-04 — otherwise the lock
+   *  could never be released and multiple locks would leak). */
+  private var wakeLock: android.os.PowerManager.WakeLock? = null
+  /** Notification queued while the permission dialog is up (I-07: re-send it
+   *  after the grant callback, otherwise the first tap only shows the dialog). */
+  private var pendingNotification: Pair<String, String>? = null
+
+  /** AGP 8 does not generate BuildConfig by default; use the debuggable flag. */
+  private val isDebuggable: Boolean
+    get() = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
   private val directoryPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
     val callback = pendingPickCallback
@@ -57,8 +68,9 @@ class MainActivity : ComponentActivity() {
           "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callback) + ", " + jsString(path) + ")", null,
         )
       } else {
-        // 用户取消：回传 null，让引擎侧 pick() 以取消结算（否则页面轮询
-        // 会继续拿到同一请求反复唤起选择器——设备实证的 picker 堆叠）。
+        // User cancelled: report null so the engine-side pick() settles as a
+        // cancellation (otherwise the page polling the same request would keep
+        // re-opening the picker — observed picker stacking on device).
         webView.evaluateJavascript(
           "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callback) + ", null)", null,
         )
@@ -69,15 +81,16 @@ class MainActivity : ComponentActivity() {
   companion object {
     const val ACTION_UPDATE = "com.dshmobile.shell.action.UPDATE"
 
-    /** 导出文件大小上限（防恶意/异常大文件 OOM）。 */
+    /** Export file-size cap (guards against OOM from a malicious/oversized file). */
     const val MAX_DOWNLOAD_BYTES = 200L * 1024 * 1024
 
-    /** 会话日志导出端点路径（WebView 内双拦截识别用）。 */
+    /** Session-log export endpoint path (matched by the dual WebView interception). */
     const val SESSION_EXPORT_PATH = "/api/session.export"
   }
 
-  // 文件上传（<input type=file> → WebView onShowFileChooser → 系统文件选择器）。
-  // 与目录选择（directoryPicker，工作区用）分离：多选、任意类型。
+  // File upload (<input type=file> → WebView onShowFileChooser → system file
+  // picker). Kept separate from directory picking (directoryPicker, used for
+  // workspaces): multi-select, any type.
   private val filePicker =
     registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
       val callback = filePathCallback
@@ -88,7 +101,15 @@ class MainActivity : ComponentActivity() {
     }
 
   private val notificationPermission =
-    registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* test channel only */ }
+    registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      // I-07: after the grant, re-send the notification that was queued while
+      // the permission dialog was up (otherwise the first tap never notifies).
+      if (granted) {
+        val pending = pendingNotification
+        pendingNotification = null
+        if (pending != null) postNotification(pending.first, pending.second)
+      }
+    }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -101,7 +122,10 @@ class MainActivity : ComponentActivity() {
     configureWebView()
     // Testable update trigger: adb am start -n .../.MainActivity -a com.dshmobile.shell.action.UPDATE
     if (intent?.action == ACTION_UPDATE) {
-      runUpdate()
+      // I-03: the activity is exported (LAUNCHER), so any app can fire this
+      // intent and trigger the download+execute chain — accept it only in
+      // debug builds and ignore it in release.
+      if (isDebuggable) runUpdate()
     } else {
       startEngineFlow()
     }
@@ -110,7 +134,14 @@ class MainActivity : ComponentActivity() {
   override fun onResume() {
     super.onResume()
     // Back from the directory picker / Termux: re-route if the engine came up.
-    if (!EngineProbe.check().optBoolean("running", false)) startEngineFlow()
+    // I-05: the probe performs network I/O; calling it on the main thread
+    // always throws NetworkOnMainThreadException (swallowed) → it would always
+    // report "not running" and force a reload losing page state on every
+    // return to foreground. Move it to a background thread.
+    Thread {
+      val running = EngineProbe.check().optBoolean("running", false)
+      if (!running) startEngineFlow()
+    }.start()
   }
 
   override fun onDestroy() {
@@ -128,17 +159,17 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun configureWebView() {
-    // WebView 远程调试（debug 构建）：真机/模拟器 CDP 自动化验证 UI 行为。
-    // AGP 8 默认不生成 BuildConfig，用 debuggable 标志判断。
-    val debuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
-    if (debuggable) android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+    // WebView remote debugging (debug builds only): CDP automation on devices
+    // and emulators for UI verification.
+    if (isDebuggable) android.webkit.WebView.setWebContentsDebuggingEnabled(true)
     webView.settings.apply {
       javaScriptEnabled = true
       domStorageEnabled = true
       allowFileAccess = false
       mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-      // prefers-color-scheme 跟随系统深色（某些厂商 WebView 默认不跟随；
-      // FORCE_DARK_AUTO 让 media query 反映系统深浅，dsh 的"跟随系统"主题依赖它）。
+      // Make prefers-color-scheme follow the system dark mode (some OEM
+      // WebViews do not by default; FORCE_DARK_AUTO lets the media query
+      // reflect system darkness, which dsh's "follow system" theme depends on).
       if (Build.VERSION.SDK_INT >= 29) {
         @Suppress("DEPRECATION")
         forceDark = WebSettings.FORCE_DARK_AUTO
@@ -147,16 +178,20 @@ class MainActivity : ComponentActivity() {
     webView.webViewClient = object : WebViewClient() {
       override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val url = request.url.toString()
-        // 会话日志导出（issue apk#6 + 403 修复）：浏览器导航带 Origin:null /
-        // sec-fetch-site 标记，会被 dsh 的 /api browser-trust fence 拒绝
-        // （403 forbidden，防 DNS rebinding/跨站）。改为 app 内下载：
-        // HttpURLConnection 无浏览器标记 → fence 放行（MuMu 实测验证）。
+        // Session-log export (issue apk#6 + the 403 fix): browser navigations
+        // carry Origin:null / sec-fetch-site markers and are rejected by dsh's
+        // /api browser-trust fence (403, anti DNS-rebinding/cross-site). Route
+        // it through an in-app download instead: HttpURLConnection has no
+        // browser markers → the fence lets it through (verified on MuMu).
         if (isSessionExport(url, request.method)) {
           downloadToDownloads(url, null)
           return true
         }
-        // 只允许引擎同源页面留在 WebView（特权桥 + 下载能力仅对引擎可信）；
-        // 外部链接交给系统浏览器，防止不可信页面获得桥能力（社工/通知轰炸/任意下载）。
+        // Keep only engine-same-origin pages inside the WebView (the privileged
+        // bridge and download capability are trusted only for the engine);
+        // external links go to the system browser so untrusted pages can never
+        // reach the bridge (social engineering / notification spam / arbitrary
+        // downloads).
         if (isEngineSource(url)) {
           view.loadUrl(url)
           return true
@@ -174,10 +209,11 @@ class MainActivity : ComponentActivity() {
         pushSystemDark(view)
       }
     }
-    // WebView 下载：会话日志导出（/api/session.export）与其余引擎源下载
-    // 统一走 app 内 MediaStore 下载——浏览器导航带 Origin:null 会被 dsh
-    // 的 /api browser-trust fence 拒绝（403），app 内 HttpURLConnection
-    // 无浏览器标记 → fence 放行（403 修复路径，见 downloadToDownloads）。
+    // WebView downloads — session-log export (/api/session.export) and other
+    // engine-source downloads — all go through the in-app MediaStore path:
+    // browser navigations carry Origin:null and are rejected by dsh's /api
+    // browser-trust fence (403), while the in-app HttpURLConnection carries no
+    // browser markers → the fence lets it through (403 fix, see downloadToDownloads).
     webView.setDownloadListener { url, _userAgent, contentDisposition, _mimeType, _contentLength ->
       downloadToDownloads(url, contentDisposition)
     }
@@ -185,8 +221,9 @@ class MainActivity : ComponentActivity() {
       override fun onShowFileChooser(
         webView: WebView, filePathCallback: ValueCallback<Array<Uri>>, fileChooserParams: FileChooserParams,
       ): Boolean {
-        // 文件上传走系统文件选择器（OpenDocument，可多选）；directoryPicker
-        // 是目录选择（工作区用），两者必须分离。
+        // File uploads go through the system file picker (OpenDocument,
+        // multi-select); directoryPicker handles directory picking (workspaces)
+        // and the two must stay separate.
         this@MainActivity.filePathCallback?.onReceiveValue(null)
         this@MainActivity.filePathCallback = filePathCallback
         filePicker.launch(emptyArray())
@@ -212,12 +249,15 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * SAF 目录选择（带 All Files Access 引导）：外部工作区要求 bash 进程能
-   * 直接访问所选真实路径；无权限时先跳系统授权页并提示页面侧重试。
+   * SAF directory picking (with an All Files Access walkthrough): the external
+   * workspace requires the bash process to reach the picked real path directly;
+   * when the permission is missing, jump to the system grant screen and let
+   * the page prompt the user to retry.
    */
   private fun pickDirectoryWithPermissionCheck(callbackId: String) {
-    // 并发保护：已有在途选择时拒绝新请求（单槽 pendingPickCallback 会被
-    // 覆盖导致前一个引擎 pick 永不结算——P2-8）。
+    // Concurrency guard: reject a new request while one is in flight (the
+    // single-slot pendingPickCallback would be overwritten and the earlier
+    // engine pick would never settle).
     if (pendingPickCallback != null) {
       webView.evaluateJavascript(
         "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", null)", null,
@@ -225,12 +265,16 @@ class MainActivity : ComponentActivity() {
       return
     }
     if (android.os.Build.VERSION.SDK_INT < 30) {
-      // Android 10 及以下无 All Files Access 模型：外部工作区不可用。
-      // 回传 null 让引擎侧 pick 以取消结算，不崩溃、不静默挂起。
+      // Android 10 and below have no All Files Access model: the external
+      // workspace is unavailable. Report null so the engine-side pick settles
+      // as a cancellation — no crash, no silent hang.
       webView.evaluateJavascript(
         "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", null)", null,
       )
-      showTestNotification("外部工作区不可用", "Android 10 及以下不支持选择外部目录")
+      showTestNotification(
+        getString(R.string.notif_workspace_unavailable),
+        getString(R.string.notif_workspace_unavailable_detail),
+      )
       return
     }
     if (android.os.Environment.isExternalStorageManager()) {
@@ -257,31 +301,38 @@ class MainActivity : ComponentActivity() {
       try {
         startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
       } catch (_: Exception) {
-        // 无任何可用入口：静默忽略（引擎侧会以取消结算）。
+        // No entry point at all: ignore silently (the engine side settles as
+        // a cancellation).
       }
     }
   }
 
   /**
-   * 下载引擎侧 URL 到系统下载目录（会话日志 ZIP 导出）。API 29+ 走
-   * MediaStore.Downloads（免权限）；更老系统不支持（实际设备均为新版本）。
-   * 仅接受引擎同源 URL（防本机 SSRF/恶意文件投放）；流式写入并设大小上限。
-   * app 内 HttpURLConnection 请求无浏览器标记（Origin/sec-fetch-site），
-   * 通过 dsh 的 /api browser-trust fence（浏览器导航 403 的修复路径）。
+   * Download an engine-side URL to the system Downloads directory (session-log
+   * ZIP export). API 29+ uses MediaStore.Downloads (no permission needed);
+   * older systems are unsupported (real devices are all newer).
+   * Only engine-same-origin URLs are accepted (guards against local SSRF /
+   * malicious file drops); written streaming with a size cap. The in-app
+   * HttpURLConnection carries no browser markers (Origin/sec-fetch-site), so
+   * it passes dsh's /api browser-trust fence (the fix for the 403 on browser
+   * navigation).
    */
-  /** 下载 in-flight 守卫：shouldOverrideUrlLoading 与 downloadListener 双入口去重。 */
+  /** In-flight download guard: dedupes the shouldOverrideUrlLoading and
+   *  downloadListener entry points. */
   private val exportDownloading = java.util.concurrent.atomic.AtomicBoolean(false)
 
   private fun downloadToDownloads(url: String, contentDisposition: String?) {
     if (!isEngineSource(url)) {
-      showTestNotification("下载被拒绝", "仅支持从本机引擎导出文件")
-      pushExportResult(false, "仅支持从本机引擎导出文件")
+      val reason = getString(R.string.notif_engine_only_export)
+      showTestNotification(getString(R.string.notif_download_rejected), reason)
+      pushExportResult(false, reason)
       return
     }
     if (!exportDownloading.compareAndSet(false, true)) return
     if (Build.VERSION.SDK_INT < 29) {
-      showTestNotification("导出失败", "当前系统版本不支持下载，请升级到 Android 10+")
-      pushExportResult(false, "当前系统版本不支持下载，请升级到 Android 10+")
+      val reason = getString(R.string.notif_export_failed_old_os)
+      showTestNotification(getString(R.string.notif_export_failed), reason)
+      pushExportResult(false, reason)
       exportDownloading.set(false)
       return
     }
@@ -303,13 +354,14 @@ class MainActivity : ComponentActivity() {
         }
         val finalName = saved
         runOnUiThread {
-          showTestNotification("会话日志已导出", "已保存到 下载/$finalName")
-          pushExportResult(true, "已保存到 下载/$finalName")
+          val detail = getString(R.string.notif_export_saved_to, finalName)
+          showTestNotification(getString(R.string.notif_export_saved), detail)
+          pushExportResult(true, detail)
         }
       } catch (t: Throwable) {
-        val message = t.message ?: "未知错误"
+        val message = t.message ?: getString(R.string.err_unknown)
         runOnUiThread {
-          showTestNotification("导出失败", message)
+          showTestNotification(getString(R.string.notif_export_failed), message)
           pushExportResult(false, message)
         }
       } finally {
@@ -319,9 +371,10 @@ class MainActivity : ComponentActivity() {
     }.start()
   }
 
-  /** 导出结果回传 WebView：UI 插件经 window.__dshExportResult 弹软件内结果框。 */
+  /** Report the export result to the WebView: the UI plugin shows an in-app
+   *  result dialog via window.__dshExportResult. */
   private fun pushExportResult(ok: Boolean, detail: String) {
-    val title = if (ok) "导出成功" else "导出失败"
+    val title = if (ok) getString(R.string.export_success) else getString(R.string.export_failed)
     val payload = "{\"ok\":" + ok + ",\"title\":" + jsString(title) + ",\"detail\":" + jsString(detail) + "}"
     webView.post {
       webView.evaluateJavascript(
@@ -330,7 +383,8 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 写入 MediaStore.Downloads（Android 10+ 免权限），流式 + 200MB 上限。 */
+  /** Write to MediaStore.Downloads (permission-free on Android 10+), streaming
+   *  with a 200MB cap. */
   private fun saveToDownloadsStreamed(filename: String, input: java.io.InputStream): String {
     val values = ContentValues().apply {
       put(MediaStore.Downloads.DISPLAY_NAME, filename)
@@ -339,7 +393,7 @@ class MainActivity : ComponentActivity() {
       put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
     }
     val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-      ?: throw java.io.IOException("无法创建下载文件")
+      ?: throw java.io.IOException(getString(R.string.err_create_download))
     try {
       contentResolver.openOutputStream(uri)?.use { out ->
         val buf = ByteArray(64 * 1024)
@@ -348,10 +402,10 @@ class MainActivity : ComponentActivity() {
           val n = input.read(buf)
           if (n < 0) break
           total += n
-          if (total > MAX_DOWNLOAD_BYTES) throw java.io.IOException("导出文件过大")
+          if (total > MAX_DOWNLOAD_BYTES) throw java.io.IOException(getString(R.string.err_export_too_large))
           out.write(buf, 0, n)
         }
-      } ?: throw java.io.IOException("无法写入下载文件")
+      } ?: throw java.io.IOException(getString(R.string.err_write_download))
       values.clear()
       values.put(MediaStore.Downloads.IS_PENDING, 0)
       contentResolver.update(uri, values, null, null)
@@ -362,13 +416,14 @@ class MainActivity : ComponentActivity() {
     return filename
   }
 
-  /** 文件名净化：去路径分隔符/控制字符，限长。 */
+  /** Sanitize a filename: replace path separators/control characters, cap length. */
   private fun sanitizeFilename(name: String): String {
     val cleaned = name.replace(Regex("[/\\\u0000-\u001f]"), "_").take(200)
     return if (cleaned.isBlank()) "dsh-session-export.zip" else cleaned
   }
 
-  /** 文件名：Content-Disposition 优先，退回 URL 的 sessionId，再退回固定名。 */
+  /** Filename: Content-Disposition wins, then the sessionId from the URL, then
+   *  a fixed fallback name. */
   private fun parseDownloadFilename(url: String, contentDisposition: String?): String {
     contentDisposition?.let { cd ->
       Regex("filename=\"?([^\";]+)\"?").find(cd)?.groupValues?.get(1)?.let { return it }
@@ -385,9 +440,10 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 系统深色状态推送：某些厂商 WebView 的 prefers-color-scheme 不跟随
-   *  uiMode（vivo/Android 16 实测），UI 插件经 matchMedia hook 消费此桥值
-   *  （window.__dshThemeBridge.setDark）驱动上游 system 主题。 */
+  /** Push the system dark-mode state: some OEM WebViews do not make
+   *  prefers-color-scheme follow uiMode (observed on vivo/Android 16); the UI
+   *  plugin consumes this bridge value via a matchMedia hook
+   *  (window.__dshThemeBridge.setDark) to drive the upstream system theme. */
   private fun pushSystemDark(view: android.webkit.WebView) {
     val dark = (resources.configuration.uiMode and
       android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -397,13 +453,14 @@ class MainActivity : ComponentActivity() {
         "window.__dshThemeBridge && window.__dshThemeBridge.setDark(" + dark + ")", null,
       )
     } catch (_: Exception) {
-      // 页面未就绪：onPageFinished 会再推一次。
+      // Page not ready: onPageFinished pushes it again.
     }
   }
 
   /**
-   * 引擎源判定：精确匹配本机引擎的 scheme/host/port（防前缀欺骗，
-   * 如 127.0.0.1:30800 或 127.0.0.1:3080.evil.com 误判为引擎源）。
+   * Engine-source check: exact match of the local engine's scheme/host/port
+   * (guards against prefix spoofing, e.g. 127.0.0.1:30800 or
+   * 127.0.0.1:3080.evil.com being mistaken for the engine source).
    */
   private fun isEngineSource(url: String): Boolean {
     return try {
@@ -415,25 +472,34 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 命中判定：引擎源 + 会话导出路径 + GET（HEAD 是前端预检，不得触发跳转）。 */
+  /** Match: engine source + exact session-export path + GET (HEAD is the
+   *  front-end preflight and must not trigger a redirect). I-06: the previous
+   *  contains-prefix match would also hit /api/session.export.evil; compare
+   *  the path exactly instead. */
   private fun isSessionExport(url: String, method: String): Boolean {
-    return method == "GET" && isEngineSource(url) && url.contains(SESSION_EXPORT_PATH)
+    if (method != "GET" || !isEngineSource(url)) return false
+    return try {
+      Uri.parse(url).path == SESSION_EXPORT_PATH
+    } catch (_: Exception) {
+      false
+    }
   }
 
   /**
-   * 原子防重放的外部浏览器打开（非导出外链）。尽力而为：启动失败时
-   * 静默（调用方不读返回值），不再有 MediaStore 回退契约——回退仅
-   * 存在于导出路径（downloadToDownloads 内）。
+   * Atomic, replay-guarded external-browser open (for non-export external
+   * links). Best effort: a failed launch is silent (callers do not read the
+   * return value); there is no MediaStore fallback contract here — the only
+   * fallback path is the export route (inside downloadToDownloads).
    */
   private val exportLaunching = java.util.concurrent.atomic.AtomicBoolean(false)
 
   private fun openInExternalBrowser(uri: android.net.Uri): Boolean {
-    if (!exportLaunching.compareAndSet(false, true)) return true // 已在途：吞掉重复触发
+    if (!exportLaunching.compareAndSet(false, true)) return true // in flight: swallow the duplicate trigger
     return try {
       startActivity(Intent(Intent.ACTION_VIEW, uri))
       true
     } catch (_: Exception) {
-      // 无浏览器可处理：回退 MediaStore 下载路径
+      // No browser can handle it; callers ignore the result.
       false
     } finally {
       exportLaunching.set(false)
@@ -442,18 +508,27 @@ class MainActivity : ComponentActivity() {
 
   private fun keepScreenOn(enable: Boolean) {
     val power = getSystemService(Context.POWER_SERVICE) as PowerManager
-    val wakeLock = power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE, "dsh:screen")
-    if (enable && !wakeLock.isHeld) wakeLock.acquire()
-    if (!enable && wakeLock.isHeld) wakeLock.release()
+    val lock = wakeLock ?: power.newWakeLock(
+      PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE, "dsh:screen",
+    ).also { wakeLock = it }
+    if (enable && !lock.isHeld) lock.acquire()
+    if (!enable && lock.isHeld) lock.release()
   }
 
   private fun showTestNotification(title: String, text: String) {
     if (Build.VERSION.SDK_INT >= 33 &&
       checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
     ) {
+      pendingNotification = title to text
       notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
       return
     }
+    postNotification(title, text)
+  }
+
+  /** Actually send the notification (called directly when the permission is
+   *  held; the permission-callback re-send also lands here). */
+  private fun postNotification(title: String, text: String) {
     val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     if (Build.VERSION.SDK_INT >= 26) {
       manager.createNotificationChannel(NotificationChannel("dsh", "dsh", NotificationManager.IMPORTANCE_DEFAULT))
@@ -484,15 +559,15 @@ class MainActivity : ComponentActivity() {
     engineStatus = TextView(this).apply { textSize = 16f; setPadding(0, 0, 0, padding) }
     progressText = TextView(this).apply { textSize = 13f; setPadding(0, 0, 0, padding); visibility = View.GONE }
     val openTermux = Button(this).apply {
-      text = "打开 Termux"
+      text = getString(R.string.button_open_termux)
       setOnClickListener { launchTermux() }
     }
     val retry = Button(this).apply {
-      text = "重试"
+      text = getString(R.string.button_retry)
       setOnClickListener { startEngineFlow() }
     }
     val update = Button(this).apply {
-      text = "检查运行时更新"
+      text = getString(R.string.button_check_update)
       setOnClickListener {
         UpdateManager(this@MainActivity).checkAndApply { status ->
           runOnUiThread { engineStatus.text = status }
@@ -518,56 +593,58 @@ class MainActivity : ComponentActivity() {
    * engine, then poll until the web service answers.
    */
   private fun startEngineFlow() {
-    // onCreate 与随后的 onResume 都会触发本流程；in-flight 守卫防止
-    // 双线程竞态解压/启动（设备实证：双启动导致引擎进程死亡）。
+    // Both onCreate and the following onResume trigger this flow; the
+    // in-flight guard prevents a double-threaded extract/start race (observed
+    // on device: a double start kills the engine process).
     if (!engineFlowRunning.compareAndSet(false, true)) return
     Thread {
       try {
-      if (EngineProbe.check().optBoolean("running", false)) {
-        runOnUiThread { showWeb() }
-        return@Thread
-      }
-      if (!engineManager.engineReady) {
-        runOnUiThread {
-          progressText.visibility = View.VISIBLE
-          guideView.visibility = View.VISIBLE
-          engineStatus.text = "首次启动：正在解压运行时（约 70MB）…"
+        if (EngineProbe.check().optBoolean("running", false)) {
+          runOnUiThread { showWeb() }
+          return@Thread
         }
-        val ok = engineManager.extractSnapshot { done, total ->
+        if (!engineManager.engineReady) {
           runOnUiThread {
-            // done 是解压后字节数，total 是压缩包字节数，口径不一致；只显示已解压量。
-            engineStatus.text = "正在解压运行时… " + done / 1024 / 1024 + " MB"
+            progressText.visibility = View.VISIBLE
+            guideView.visibility = View.VISIBLE
+            engineStatus.text = getString(R.string.status_first_extract)
+          }
+          val ok = engineManager.extractSnapshot { done, total ->
+            runOnUiThread {
+              // done is extracted bytes, total is the archive bytes — different
+              // baselines; show only the extracted amount.
+              engineStatus.text = getString(R.string.status_extracting, done / 1024 / 1024)
+            }
+          }
+          if (!ok) {
+            runOnUiThread {
+              engineStatus.text = getString(R.string.status_extract_failed)
+              showGuide()
+            }
+            return@Thread
           }
         }
-        if (!ok) {
+        if (!engineManager.startEngine()) {
           runOnUiThread {
-            engineStatus.text = "运行时解压失败，请重试。"
+            engineStatus.text = getString(R.string.status_engine_start_failed)
             showGuide()
           }
           return@Thread
         }
-      }
-      if (!engineManager.startEngine()) {
+        // Poll up to 30s for the web service.
+        for (i in 0..30) {
+          if (EngineProbe.check().optBoolean("running", false)) {
+            startEngineService()
+            applyShizukuKeepAlive()
+            runOnUiThread { showWeb() }
+            return@Thread
+          }
+          Thread.sleep(1000)
+        }
         runOnUiThread {
-          engineStatus.text = "引擎启动失败，请重试。"
+          engineStatus.text = getString(R.string.status_engine_timeout)
           showGuide()
         }
-        return@Thread
-      }
-      // Poll up to 30s for the web service.
-      for (i in 0..30) {
-        if (EngineProbe.check().optBoolean("running", false)) {
-          startEngineService()
-          applyShizukuKeepAlive()
-          runOnUiThread { showWeb() }
-          return@Thread
-        }
-        Thread.sleep(1000)
-      }
-      runOnUiThread {
-        engineStatus.text = "引擎启动超时，请重试。"
-        showGuide()
-      }
       } finally {
         engineFlowRunning.set(false)
       }

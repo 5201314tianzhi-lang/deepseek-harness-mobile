@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">dsh</string>
+
+  <!-- Guide view -->
+  <string name="button_open_termux">打开 Termux</string>
+  <string name="button_retry">重试</string>
+  <string name="button_check_update">检查运行时更新</string>
+
+  <!-- Notifications -->
+  <string name="notif_workspace_unavailable">外部工作区不可用</string>
+  <string name="notif_workspace_unavailable_detail">Android 10 及以下不支持选择外部目录</string>
+  <string name="notif_download_rejected">下载被拒绝</string>
+  <string name="notif_engine_only_export">仅支持从本机引擎导出文件</string>
+  <string name="notif_export_failed">导出失败</string>
+  <string name="notif_export_failed_old_os">当前系统版本不支持下载，请升级到 Android 10+</string>
+  <string name="notif_export_saved">会话日志已导出</string>
+  <string name="notif_export_saved_to">已保存到 下载/%1$s</string>
+
+  <!-- Export result dialog -->
+  <string name="export_success">导出成功</string>
+  <string name="export_failed">导出失败</string>
+
+  <!-- Engine flow status -->
+  <string name="status_first_extract">首次启动：正在解压运行时（约 70MB）…</string>
+  <string name="status_extracting">正在解压运行时… %1$d MB</string>
+  <string name="status_extract_failed">运行时解压失败，请重试。</string>
+  <string name="status_engine_start_failed">引擎启动失败，请重试。</string>
+  <string name="status_engine_timeout">引擎启动超时，请重试。</string>
+
+  <!-- Download errors -->
+  <string name="err_create_download">无法创建下载文件</string>
+  <string name="err_write_download">无法写入下载文件</string>
+  <string name="err_export_too_large">导出文件过大</string>
+  <string name="err_unknown">未知错误</string>
+
+  <!-- Runtime update (UpdateManager) -->
+  <string name="update_checking">检查更新…</string>
+  <string name="update_downloading">下载快照（%1$d MB）…</string>
+  <string name="update_verifying">校验…</string>
+  <string name="update_extracting">解压新快照…</string>
+  <string name="update_switching">切换运行时…</string>
+  <string name="update_done">更新完成，引擎已自动重启</string>
+  <string name="update_failed">更新失败：%1$s</string>
+  <string name="err_manifest_https">manifest URL 必须为 HTTPS</string>
+  <string name="err_snapshot_url_https">快照下载 URL 必须为 HTTPS</string>
+  <string name="err_manifest_no_sha">manifest 缺少 sha256</string>
+  <string name="err_sha_mismatch">SHA256 不匹配: %1$s</string>
+  <string name="err_new_snapshot_no_node">新快照缺少 node</string>
+  <string name="err_old_runtime_switch">旧运行时切换失败</string>
+  <string name="err_switch_failed_rollback">切换失败且回滚失败（usr-old 保留）</string>
+  <string name="err_switch_failed_rolled_back">切换失败，已回滚</string>
+  <string name="err_download_http">下载 HTTP %1$d</string>
+  <string name="err_snapshot_too_large">快照文件过大</string>
+  <string name="err_manifest_http">manifest HTTP %1$d</string>
+
+  <!-- Engine foreground service -->
+  <string name="engine_channel_name">dsh 引擎</string>
+  <string name="engine_notification_title">dsh 引擎运行中</string>
+  <string name="engine_notification_text">DeepSeek Harness 正在后台工作</string>
+
+  <!-- Shizuku -->
+  <string name="shizuku_granted">Shizuku 已授权（v%1$d）——保活增强就绪</string>
+  <string name="shizuku_absent">Shizuku 未运行（可选：后台保活增强需要它）</string>
+</resources>

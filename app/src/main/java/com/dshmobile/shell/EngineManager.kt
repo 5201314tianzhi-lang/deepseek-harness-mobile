@@ -19,9 +19,10 @@ class EngineManager(private val context: Context, private val pickToken: String?
   val homeDir = File(context.filesDir, "home")
 
   /**
-   * 公共持久化目录：/storage/emulated/0/Documents/dshdata。
-   * 引擎 DSH_HOME 指向此处——个性化设置、插件配置、对话记录、附件等全部
-   * 用户数据默认落公共目录（文件管理器可见、可备份、卸载重装不丢）。
+   * Shared persistent directory: /storage/emulated/0/Documents/dshdata.
+   * User data (settings, plugin configs, session history, attachments) lands
+   * here by default so it is visible to file managers, can be backed up, and
+   * survives app uninstall/reinstall.
    */
   val dshDataDir: File
     get() {
@@ -31,12 +32,14 @@ class EngineManager(private val context: Context, private val pickToken: String?
     }
   private val nodeBin = File(usrDir, "bin/node")
   private val dshBin = File(usrDir, "lib/node_modules/@deepseek-ai/dsh/lib/bin.js")
-  private var engineProcess: Process? = null
 
   val engineReady: Boolean get() = nodeBin.exists()
 
-  /** 进程级启动守卫（MainActivity 与 EngineService 各自 new EngineManager，
-   *  实例字段互不可见——双启动竞态必须用 companion 级 CAS）。 */
+  /**
+   * Process-wide start guard. MainActivity and EngineService each construct
+   * their own EngineManager instance, so instance fields are not shared —
+   * double-start protection must live on the companion object (CAS).
+   */
   private val starting: Boolean
     get() = STARTING.get()
 
@@ -59,70 +62,142 @@ class EngineManager(private val context: Context, private val pickToken: String?
   }
 
   /**
-   * 确保公共持久化目录就绪（幂等，后台线程调用）。
+   * Ensure the shared persistent directory is wired up (idempotent; call from
+   * a background thread).
    *
-   * 方案（issue apk#8）：DSH_HOME 本身**必须留在私有域**——dsh 每次启动会在
-   * `$DSH_HOME/profiles/node_modules` 维护 flat-module 回退（每个依赖包一个
-   * symlink 指向引擎安装位置），而公共目录（/storage/emulated/0）FUSE 禁止
-   * 创建 symlink（实测 Permission denied），整体迁移会使引擎必然崩溃。
+   * Design (issue apk#8): DSH_HOME itself MUST stay in the private domain —
+   * dsh maintains a flat-module fallback under `$DSH_HOME/profiles/node_modules`
+   * on every start (one symlink per dependency pointing at the engine install),
+   * and the public storage (/storage/emulated/0) FUSE layer forbids symlink
+   * creation (observed Permission denied), so a wholesale migration would
+   * break the engine.
    *
-   * 因此采用**数据项级迁移**：把用户数据搬到 Documents/dshdata，并在私有
-   * 原位建立 symlink（app 私有域允许 symlink，实测 OK），dsh 读写跟随
-   * symlink 落到公共目录：
-   *  - settings.yaml：拷贝到公共（settings-file 经 cordis.patch.yml 的
-   *    config.path 直接指向公共文件，规避原子写替换 symlink 的问题）
-   *  - sessions/、storages/、attachments/：整体搬移 + 私有 symlink
-   *    （目录内写文件不会替换目录 symlink）
-   *  - profiles/{web,headless}/cordis.yml + cordis.patch.yml：拷贝到公共
-   *    + 私有替换为 symlink（dsh 启动只读这两个文件）
-   *  - .credentials.yaml（API key）：**不迁移**——公共目录 FUSE 强制 660，
-   *    credentials-local 权限校验会拒绝加载，且 key 暴露给其他应用；
-   *    key 留在私有实体，由 cordis.patch.yml 的 credentials path 指向。
-   * 迁移源在搬移后仅剩 symlink/保留实体，不删除公共副本。
+   * Instead we do item-level migration: move user data to Documents/dshdata
+   * and place a symlink at the original private location (symlinks work in the
+   * app-private domain, verified on device), so dsh reads/writes land on the
+   * public directory through the symlink:
+   *  - settings.yaml: copied to public (the settings-file config.path in
+   *    cordis.patch.yml points straight at the public file, avoiding the
+   *    atomic-rewrite-replaces-symlink problem)
+   *  - sessions/, storages/, attachments/: moved wholesale + private symlink
+   *    (writing files inside a directory does not replace the directory symlink)
+   *  - profiles/{web,headless}/cordis.yml + cordis.patch.yml: copied to public
+   *    + private replaced with a symlink (dsh only reads these two files)
+   *  - .credentials.yaml (API key): NOT migrated — the public FUSE forces mode
+   *    660, which the credentials-local permission check rejects, and the key
+   *    would be exposed to other apps; it stays as the private entity, pointed
+   *    to by the credentials path in cordis.patch.yml.
+   * After migration the private locations hold only symlinks/kept entities;
+   * the public copies are never deleted.
    */
   fun ensureDshDataHome(): File {
     val dshData = dshDataDir
     val privateDsh = File(homeDir, ".dsh")
     val marker = File(dshData, ".migrated-from")
-    if (privateDsh.isDirectory && !marker.exists()) {
-      try {
-        dshData.mkdirs()
-        // 1) settings.yaml：公共实体 + 插件 config.path 指向（见 patch）
-        copyFileIfExists(File(privateDsh, "settings.yaml"), File(dshData, "settings.yaml"))
-        // 2) 目录级数据：整体搬移 + 私有 symlink
-        relocateDir(File(privateDsh, "sessions"), File(dshData, "sessions"))
-        relocateDir(File(privateDsh, "storages"), File(dshData, "storages"))
-        relocateDir(File(privateDsh, "attachments"), File(dshData, "attachments"))
-        // 3) 插件配置：拷贝到公共 + 私有替换为 symlink（dsh 只读）
+    if (privateDsh.isDirectory) {
+      if (marker.exists()) {
+        // Re-link (I-10): uninstall wipes the private symlinks but the public
+        // data and marker persist. Idempotently rebuild the private links so
+        // the data becomes visible again; missing public targets are skipped
+        // and already-correct links cost nothing.
+        relink(File(privateDsh, "sessions"), File(dshData, "sessions"))
+        relink(File(privateDsh, "storages"), File(dshData, "storages"))
+        relink(File(privateDsh, "attachments"), File(dshData, "attachments"))
         for (profile in listOf("web", "headless")) {
           for (name in listOf("cordis.yml", "cordis.patch.yml")) {
-            val sf = File(privateDsh, "profiles/$profile/$name")
-            if (sf.exists() && sf.isFile) {
-              val pf = File(dshData, "profiles/$profile/$name")
-              pf.parentFile?.mkdirs()
-              sf.copyTo(pf, overwrite = true)
-              sf.delete()
-              try {
-                java.nio.file.Files.createSymbolicLink(sf.toPath(), pf.toPath())
-              } catch (t: Throwable) {
-                // symlink 失败（极端情况）：保留私有实体，公共副本作废。
-                pf.delete()
-                Log.w(TAG, "symlink failed for " + sf.absolutePath + "; keeping private copy")
+            relinkFile(File(privateDsh, "profiles/$profile/$name"), File(dshData, "profiles/$profile/$name"))
+          }
+        }
+      } else {
+        try {
+          dshData.mkdirs()
+          // 1) settings.yaml: public entity + plugin config.path points at it (see patch)
+          copyFileIfExists(File(privateDsh, "settings.yaml"), File(dshData, "settings.yaml"))
+          // 2) directory-level data: move wholesale + private symlink
+          relocateDir(File(privateDsh, "sessions"), File(dshData, "sessions"))
+          relocateDir(File(privateDsh, "storages"), File(dshData, "storages"))
+          relocateDir(File(privateDsh, "attachments"), File(dshData, "attachments"))
+          // 3) plugin configs: copy to public + replace private with a symlink (dsh only reads)
+          for (profile in listOf("web", "headless")) {
+            for (name in listOf("cordis.yml", "cordis.patch.yml")) {
+              val sf = File(privateDsh, "profiles/$profile/$name")
+              if (sf.exists() && sf.isFile) {
+                val pf = File(dshData, "profiles/$profile/$name")
+                pf.parentFile?.mkdirs()
+                sf.copyTo(pf, overwrite = true)
+                sf.delete()
+                try {
+                  java.nio.file.Files.createSymbolicLink(sf.toPath(), pf.toPath())
+                } catch (t: Throwable) {
+                  // Symlink failed (edge case): keep the private entity, discard the public copy.
+                  pf.delete()
+                  Log.w(TAG, "symlink failed for " + sf.absolutePath + "; keeping private copy")
+                }
               }
             }
           }
+          marker.writeText(privateDsh.absolutePath)
+          Log.i(TAG, "dshdata migration done -> " + dshData.absolutePath)
+        } catch (t: Throwable) {
+          // A failed migration must not block startup: DSH_HOME stays private,
+          // the engine still works, and the migration retries next time.
+          Log.e(TAG, "dshdata migration failed", t)
         }
-        marker.writeText(privateDsh.absolutePath)
-        Log.i(TAG, "dshdata migration done -> " + dshData.absolutePath)
-      } catch (t: Throwable) {
-        // 迁移失败不阻断启动：DSH_HOME 仍私有，引擎可用，下次再试。
-        Log.e(TAG, "dshdata migration failed", t)
       }
     }
     return privateDsh
   }
 
-  /** 拷贝单个文件（存在时）。 */
+  /**
+   * Re-link (I-10): when the public target exists, ensure the private item is
+   * a symlink pointing at it. Already-correct symlink → no-op; private real
+   * empty directory (fresh shell created by dsh after reinstall) → replaced
+   * with a symlink; private non-empty directory (may hold new data) →
+   * conservatively skipped.
+   */
+  private fun relink(src: File, dst: File) {
+    if (!dst.exists()) return
+    val srcPath = src.toPath()
+    if (java.nio.file.Files.isSymbolicLink(srcPath)) {
+      if (src.canonicalPath == dst.canonicalPath) return
+      src.delete()
+    } else if (src.exists()) {
+      val children = src.listFiles()
+      if (children != null && children.isEmpty()) {
+        src.delete()
+      } else {
+        Log.w(TAG, "relink skipped (non-empty): " + src.absolutePath)
+        return
+      }
+    }
+    src.parentFile?.mkdirs()
+    try {
+      java.nio.file.Files.createSymbolicLink(srcPath, dst.toPath())
+    } catch (t: Throwable) {
+      Log.w(TAG, "relink failed for " + src.absolutePath, t)
+    }
+  }
+
+  /** Re-link (I-10), file variant: when the public target exists, replace the
+   *  private file with a symlink pointing at it. */
+  private fun relinkFile(src: File, dst: File) {
+    if (!dst.isFile) return
+    val srcPath = src.toPath()
+    if (java.nio.file.Files.isSymbolicLink(srcPath)) {
+      if (src.canonicalPath == dst.canonicalPath) return
+      src.delete()
+    } else if (src.exists()) {
+      src.delete()
+    }
+    src.parentFile?.mkdirs()
+    try {
+      java.nio.file.Files.createSymbolicLink(srcPath, dst.toPath())
+    } catch (t: Throwable) {
+      Log.w(TAG, "relinkFile failed for " + src.absolutePath, t)
+    }
+  }
+
+  /** Copy a single file when it exists. */
   private fun copyFileIfExists(src: File, dst: File) {
     if (src.isFile) {
       dst.parentFile?.mkdirs()
@@ -130,7 +205,8 @@ class EngineManager(private val context: Context, private val pickToken: String?
     }
   }
 
-  /** 目录整体搬移到公共（跨挂载 rename 失败则拷贝+删源），原位建 symlink。 */
+  /** Move a directory wholesale to public (copy+delete-source when a cross-
+   *  mount rename fails), then leave a symlink at the original location. */
   private fun relocateDir(src: File, dst: File) {
     if (!src.isDirectory || dst.exists()) return
     dst.parentFile?.mkdirs()
@@ -145,7 +221,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
     }
   }
 
-  /** 递归拷贝目录树（实体内容）。 */
+  /** Recursively copy a directory tree (real file contents). */
   private fun copyTree(src: File, dst: File, skip: Set<String>) {
     src.listFiles()?.forEach { f ->
       if (f.name in skip) return@forEach
@@ -161,17 +237,26 @@ class EngineManager(private val context: Context, private val pickToken: String?
 
   /** Start the dsh web engine from the embedded snapshot. */
   fun startEngine(port: Int = 3080): Boolean {
-    // LD_PRELOAD 依赖快照内的 termux-exec 库：缺失时所有子进程 exec 会失败，
-    // 且叠加冷却窗口 = 引擎静默停摆 90s——启动前显式断言，缺失即 loud fail。
+    // LD_PRELOAD depends on the termux-exec library inside the snapshot: if it
+    // is missing every child-process exec fails, and combined with the cooldown
+    // window the engine would silently stall for 90s — assert it before
+    // starting and fail loudly when absent.
     val preload = File(usrDir, "lib/libtermux-exec-ld-preload.so")
     if (!preload.exists()) {
       Log.e(TAG, "engine start failed: termux-exec preload missing at " + preload.absolutePath)
       return false
     }
     val now = System.currentTimeMillis()
-    // 进程级 CAS：并发调用只有一个能真正启动（设备实证 EADDRINUSE 双启动）。
+    // Process-level CAS: only one concurrent caller actually starts the engine
+    // (device-observed EADDRINUSE on double start).
     if (!STARTING.compareAndSet(false, true)) return true
-    // 冷却窗口：上次尝试后 90s 内不重复启动（冷启动 boot 需 20-45s）。
+    // I-11: when the engine process is dead (or was never started) there is no
+    // double-start race — clear the cooldown immediately, otherwise the 5s
+    // watchdog polls would keep hitting the 90s cooldown window and crash
+    // recovery would take up to 90s.
+    if (engineProcess?.isAlive != true) EngineManager.lastStartAttemptAt = 0
+    // Cooldown window: no new start within this window of the last attempt
+    // (cold node boot takes 20-45s).
     if (now - EngineManager.lastStartAttemptAt < START_COOLDOWN_MS) {
       STARTING.set(false)
       return true
@@ -184,9 +269,10 @@ class EngineManager(private val context: Context, private val pickToken: String?
         "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
         "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
         "HOME" to homeDir.absolutePath,
-        // DSH_HOME 保持在私有域（FUSE 禁 symlink，公共域无法维护
-        // profiles/node_modules flat fallback）；用户数据经迁移+symlink
-        // /插件配置落到公共 Documents/dshdata（见 ensureDshDataHome）。
+        // DSH_HOME stays in the private domain (public FUSE forbids symlinks,
+        // so the profiles/node_modules flat fallback cannot live there); user
+        // data is routed to public Documents/dshdata via migration + symlinks
+        // and plugin configs (see ensureDshDataHome).
         "DSH_HOME" to ensureDshDataHome().absolutePath,
         // os.tmpdir() falls back to the baked-in Termux tmp on Android
         // (unwritable from the app domain); keep spill inside filesDir.
@@ -205,11 +291,13 @@ class EngineManager(private val context: Context, private val pickToken: String?
         "TERMUX_APP__DATA_DIR" to context.filesDir.parentFile.absolutePath,
         "TERMUX_APP__LEGACY_DATA_DIR" to "/data/data/com.dshmobile.shell",
         "TERMUX_VERSION" to "0.118.3",
-        // 目录选择桥端点鉴权 token（web-compat 插件校验 x-dsh-pick-token）。
+        // Auth token for the directory-pick bridge endpoint (validated by the
+        // web-compat plugin as x-dsh-pick-token).
         "DSH_PICK_TOKEN" to (pickToken ?: ""),
       )
       engineProcess = startWithArgs(args, env)
-      // 冷却只在真实启动后写入：失败路径不占用冷却窗口（可立即重试）。
+      // The cooldown is only set after a real start; a failed path does not
+      // consume the window so a retry can happen immediately.
       EngineManager.lastStartAttemptAt = now
       true
     } catch (t: Throwable) {
@@ -245,9 +333,10 @@ class EngineManager(private val context: Context, private val pickToken: String?
 
   /** Stop the engine process (best-effort). */
   fun stopEngine() {
-    engineProcess?.destroy()
-    engineProcess = null
-    // 手动停止后重置冷却：用户回前台应立即允许重新启动。
+    EngineManager.engineProcess?.destroy()
+    EngineManager.engineProcess = null
+    // Reset the cooldown after a manual stop: the user returning to the
+    // foreground should be allowed to restart immediately.
     EngineManager.lastStartAttemptAt = 0
   }
 
@@ -261,11 +350,19 @@ class EngineManager(private val context: Context, private val pickToken: String?
      *  slowest observed boot with margin. */
     const val START_COOLDOWN_MS = 90_000L
 
-    /** 进程级启动 CAS：跨 EngineManager 实例可见（双启动竞态防护）。 */
+    /** Process-level start CAS: visible across EngineManager instances
+     *  (double-start race protection). */
     val STARTING = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    /** 上次真实启动时刻（epoch ms）；watchdog 冷却窗口基准。 */
+    /** Epoch ms of the last real start; baseline for the watchdog cooldown. */
     @Volatile
     var lastStartAttemptAt: Long = 0
+
+    /** Engine process, shared at the process level (I-11): MainActivity and
+     *  EngineService hold separate EngineManager instances whose instance
+     *  fields are invisible to each other — like STARTING, this lives on the
+     *  companion so both instances can see and manage the same process. */
+    @Volatile
+    var engineProcess: Process? = null
   }
 }

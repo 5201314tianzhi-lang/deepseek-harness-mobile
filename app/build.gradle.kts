@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
   id("com.android.application")
   id("org.jetbrains.kotlin.android")
@@ -14,8 +16,8 @@ android {
     // (the embedded engine, bash, and every child command would need linker64
     // wrappers); 34 keeps native exec working on Android 15/16 devices.
     targetSdk = 34
-    versionCode = 5
-    versionName = "0.10.4"
+    versionCode = 1
+    versionName = "0.1.0"
   }
 
   androidResources {
@@ -30,7 +32,8 @@ android {
   }
 
   lint {
-    // 离线环境无 lint-gradle 依赖缓存（国内网络）；lint 非发布关键路径。
+    // Offline environments have no lint-gradle dependency cache (CN network);
+    // lint is not on the release critical path.
     checkReleaseBuilds = false
     abortOnError = false
   }
@@ -39,21 +42,28 @@ android {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
   }
-  kotlinOptions {
-    jvmTarget = "17"
+}
+
+// Kotlin 2.4 removes the kotlinOptions DSL; use the compilerOptions API instead.
+kotlin {
+  compilerOptions {
+    jvmTarget.set(JvmTarget.JVM_17)
   }
 }
 
-// 运行时快照来自 GitHub Releases（大文件不入库）；缺失时构建失败并给出获取指引。
+// The runtime snapshot ships from GitHub Releases (the large file is not in
+// the repo); fail the build with fetch instructions when it is missing.
 tasks.whenTaskAdded {
   if (name == "mergeDebugAssets" || name == "mergeReleaseAssets") {
     doFirst {
       val snap = file("src/main/assets/snapshot.tar.xz")
       if (!snap.exists()) {
         throw GradleException(
-          "缺少运行时快照 assets/snapshot.tar.xz —— " +
-            "从 GitHub Releases 下载 snapshot-x86_64.tar.xz 后放到 app/src/main/assets/snapshot.tar.xz，" +
-            "或按 scripts/make-snapshot.sh 在 Termux 设备自打后拉取（见 README.md）",
+          "缺少运行时快照 assets/snapshot.tar.xz / Missing runtime snapshot assets/snapshot.tar.xz — " +
+            "从 GitHub Releases 下载 snapshot-x86_64.tar.xz 后放到 app/src/main/assets/snapshot.tar.xz，或按 " +
+            "scripts/make-snapshot.sh 在 Termux 设备自打后拉取（见 README.md）。/ " +
+            "Download snapshot-x86_64.tar.xz from GitHub Releases into app/src/main/assets/snapshot.tar.xz, or " +
+            "build it on a Termux device with scripts/make-snapshot.sh (see README.md).",
         )
       }
     }
@@ -61,9 +71,9 @@ tasks.whenTaskAdded {
 }
 
 dependencies {
-  implementation("androidx.activity:activity-ktx:1.9.3")
-  implementation("org.apache.commons:commons-compress:1.27.1")
-  implementation("org.tukaani:xz:1.10")
+  implementation("androidx.activity:activity-ktx:1.13.0")
+  implementation("org.apache.commons:commons-compress:1.28.0")
+  implementation("org.tukaani:xz:1.12")
   implementation("dev.rikka.shizuku:api:13.1.5")
   implementation("dev.rikka.shizuku:provider:13.1.5")
 }

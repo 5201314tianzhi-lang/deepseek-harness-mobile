@@ -38,6 +38,9 @@ class EngineService : Service() {
   override fun onDestroy() {
     watchdog?.shutdownNow()
     watchdog = null
+    // I-12: nothing takes over the engine process after the service dies, so
+    // stop it to avoid an orphaned process.
+    engineManager.stopEngine()
     super.onDestroy()
   }
 
@@ -61,7 +64,9 @@ class EngineService : Service() {
   private fun buildNotification(): android.app.Notification {
     val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
     if (Build.VERSION.SDK_INT >= 26) {
-      manager.createNotificationChannel(NotificationChannel("engine", "dsh 引擎", NotificationManager.IMPORTANCE_LOW))
+      manager.createNotificationChannel(
+        NotificationChannel("engine", getString(R.string.engine_channel_name), NotificationManager.IMPORTANCE_LOW),
+      )
     }
     val pending = PendingIntent.getActivity(
       this, 0, Intent(this, MainActivity::class.java),
@@ -69,8 +74,8 @@ class EngineService : Service() {
     )
     return NotificationCompat.Builder(this, "engine")
       .setSmallIcon(android.R.drawable.stat_notify_chat)
-      .setContentTitle("dsh 引擎运行中")
-      .setContentText("DeepSeek Harness 正在后台工作")
+      .setContentTitle(getString(R.string.engine_notification_title))
+      .setContentText(getString(R.string.engine_notification_text))
       .setContentIntent(pending)
       .setOngoing(true)
       .build()

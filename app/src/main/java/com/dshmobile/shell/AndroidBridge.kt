@@ -7,7 +7,7 @@ import org.json.JSONObject
 
 /**
  * JS bridge injected as window.androidBridge (protocol v1, see
- * docs/apk-shell-design.md). All methods are callable from the page; results
+ * docs/design.md). All methods are callable from the page; results
  * that arrive asynchronously are delivered back through
  * window.__dshBridge.onDirectoryPicked(callbackId, path) on the main thread.
  */
@@ -43,7 +43,8 @@ class AndroidBridge(
   /** True when the app holds All Files Access (external workspace requirement). */
   @JavascriptInterface
   fun hasAllFilesAccess(): Boolean {
-    // isExternalStorageManager 仅 API 30+ 存在；低版本无该权限模型。
+    // isExternalStorageManager exists only on API 30+; older versions have no
+    // such permission model.
     if (android.os.Build.VERSION.SDK_INT < 30) return false
     return android.os.Environment.isExternalStorageManager()
   }
@@ -54,7 +55,8 @@ class AndroidBridge(
     onAllFilesAccessRequest()
   }
 
-  /** 目录选择桥的一次性会话 token（引擎侧 pick 端点校验；null = 未启用）。 */
+  /** One-shot session token for the directory-pick bridge (validated by the
+   *  engine-side pick endpoint; null = not enabled). */
   @JavascriptInterface
   fun getPickToken(): String? = pickToken
 

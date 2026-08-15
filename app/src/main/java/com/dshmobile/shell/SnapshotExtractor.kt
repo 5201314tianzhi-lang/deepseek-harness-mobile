@@ -31,10 +31,14 @@ object SnapshotExtractor {
     val xz = XZCompressorInputStream(input)
     val tar = TarArchiveInputStream(xz)
     val execFiles = mutableListOf<String>()
+    val destCanonical = dest.canonicalPath
     var done = 0L
     var entry: TarArchiveEntry? = tar.nextEntry
     while (entry != null) {
-      val target = File(dest, entry.name)
+      // Traversal guard (I-02): every entry name must resolve inside dest.
+      // Checked per entry before processing (hard links / duplicate entries
+      // cannot bypass it: the target is canonical-path validated).
+      val target = resolveTarget(dest, destCanonical, entry.name)
       when {
         entry.isDirectory -> target.mkdirs()
         entry.isSymbolicLink -> {
@@ -67,13 +71,29 @@ object SnapshotExtractor {
     stampExecAttribute(execFiles)
   }
 
+  /**
+   * Resolve a tar entry name against the extraction root, rejecting any
+   * traversal (`..`) or absolute path that would escape dest. Throws on
+   * violation: an untrusted snapshot must never write outside its root.
+   */
+  private fun resolveTarget(dest: File, destCanonical: String, name: String): File {
+    val raw = File(dest, name)
+    val canonical = raw.canonicalPath
+    if (canonical != destCanonical && !canonical.startsWith(destCanonical + File.separator)) {
+      throw java.io.IOException("tar entry escapes extraction root: " + name)
+    }
+    return raw
+  }
+
   /** Stamp the Android exec attribute on all extracted executables. */
   private fun stampExecAttribute(files: List<String>) {
     if (files.isEmpty()) return
     try {
-      // 参数数组直传（不经 shell），文件名里的引号/元字符不会被解释。
+      // Pass the argument array directly (no shell), so quotes/metacharacters
+      // in filenames are never interpreted.
       val base = listOf("/system/bin/setfattr", "-n", "security.android.exec", "-v", "1")
-      // 并发批次（每批最多 64 个），避免一次 spawn 过多进程。
+      // Concurrent batches (64 files each) to avoid spawning too many processes
+      // at once.
       files.chunked(64).forEach { batch ->
         val procs = batch.map { f -> ProcessBuilder(base + f).redirectErrorStream(true).start() }
         for (p in procs) {
