@@ -137,7 +137,7 @@ jobs:
           CFLAGS="--target=$TRIPLE" \
           CXXFLAGS="--target=$TRIPLE -static-libstdc++" \
           LDFLAGS="--target=$TRIPLE -static-libstdc++" \
-          npx --no-install node-gyp rebuild --nodedir=/tmp/node-headers \
+          npx --yes node-gyp rebuild --nodedir=/tmp/node-headers \
             --arch=$GYP_ARCH --target_arch=$GYP_ARCH --release 2>&1 | tail -3
           file build/Release/pty.node
           readelf -d build/Release/pty.node | grep NEEDED || true
