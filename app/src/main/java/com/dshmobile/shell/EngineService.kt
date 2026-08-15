@@ -29,6 +29,7 @@ class EngineService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    AppLog.log("watchdog", "service start")
     ensureEngine()
     return START_STICKY
   }
@@ -53,6 +54,7 @@ class EngineService : Service() {
         watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
           exec.scheduleWithFixedDelay({
             if (!EngineProbe.check().optBoolean("running", false) && engineManager.engineReady) {
+              AppLog.log("watchdog", "engine down, restarting")
               engineManager.startEngine()
             }
           }, 5, 5, TimeUnit.SECONDS)

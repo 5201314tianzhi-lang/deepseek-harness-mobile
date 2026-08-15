@@ -52,11 +52,14 @@ class EngineManager(private val context: Context, private val pickToken: String?
   fun extractSnapshot(onProgress: (Long, Long) -> Unit): Boolean {
     return try {
       val fd = context.assets.openFd("snapshot.tar.xz")
+      AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + usrDir.parentFile)
       SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
       homeDir.mkdirs()
+      AppLog.log("extract", "done")
       true
     } catch (t: Throwable) {
       Log.e(TAG, "snapshot extract failed", t)
+      AppLog.log("extract", "FAILED", t)
       false
     }
   }
@@ -142,6 +145,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
           // A failed migration must not block startup: DSH_HOME stays private,
           // the engine still works, and the migration retries next time.
           Log.e(TAG, "dshdata migration failed", t)
+          AppLog.log("migrate", "dshdata migration FAILED", t)
         }
       }
     }
@@ -244,6 +248,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
     val preload = File(usrDir, "lib/libtermux-exec-ld-preload.so")
     if (!preload.exists()) {
       Log.e(TAG, "engine start failed: termux-exec preload missing at " + preload.absolutePath)
+      AppLog.log("engine", "start refused: termux-exec preload missing at " + preload.absolutePath)
       return false
     }
     val now = System.currentTimeMillis()
@@ -299,9 +304,12 @@ class EngineManager(private val context: Context, private val pickToken: String?
       // The cooldown is only set after a real start; a failed path does not
       // consume the window so a retry can happen immediately.
       EngineManager.lastStartAttemptAt = now
+      AppLog.log("engine", "started pid=" + engineProcess?.pid() + " port=" + port +
+        " node=" + nodeBin.absolutePath + " arch=" + android.os.Build.SUPPORTED_ABIS.joinToString(","))
       true
     } catch (t: Throwable) {
       Log.e(TAG, "engine start failed", t)
+      AppLog.log("engine", "start FAILED", t)
       false
     } finally {
       STARTING.set(false)
@@ -327,6 +335,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
     } catch (e: java.io.IOException) {
       if (e.message?.contains("Permission denied") != true) throw e
       Log.w(TAG, "direct exec denied, falling back to linker64: " + e.message)
+      AppLog.log("engine", "direct exec denied (" + e.message + "), falling back to linker64")
       build(listOf("/system/bin/linker64") + args.toList()).start()
     }
   }

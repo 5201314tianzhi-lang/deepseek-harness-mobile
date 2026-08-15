@@ -6,6 +6,9 @@
   <string name="button_open_termux">Open Termux</string>
   <string name="button_retry">Retry</string>
   <string name="button_check_update">Check for runtime updates</string>
+  <string name="button_copy_log">Copy diagnostic log</string>
+  <string name="notif_log_copied">Diagnostic log copied</string>
+  <string name="notif_log_copied_detail">%1$s lines copied to the clipboard — paste them into your bug report</string>
 
   <!-- Notifications -->
   <string name="notif_workspace_unavailable">External workspace unavailable</string>

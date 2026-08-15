@@ -99,6 +99,7 @@ class UpdateManager(private val context: Context) {
         }
         onStatus(context.getString(R.string.update_done))
       } catch (t: Throwable) {
+        AppLog.log("update", "update FAILED", t)
         onStatus(context.getString(R.string.update_failed, t.message ?: t.javaClass.simpleName))
       }
     }.start()

@@ -6,6 +6,9 @@
   <string name="button_open_termux">打开 Termux</string>
   <string name="button_retry">重试</string>
   <string name="button_check_update">检查运行时更新</string>
+  <string name="button_copy_log">复制诊断日志</string>
+  <string name="notif_log_copied">诊断日志已复制</string>
+  <string name="notif_log_copied_detail">已复制 %1$s 行到剪贴板，请粘贴到问题反馈中</string>
 
   <!-- Notifications -->
   <string name="notif_workspace_unavailable">外部工作区不可用</string>

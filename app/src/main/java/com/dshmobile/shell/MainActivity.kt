@@ -58,6 +58,14 @@ class MainActivity : ComponentActivity() {
   private val isDebuggable: Boolean
     get() = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
+  /** Record device/env facts once, so bug reports carry the context needed to
+   *  diagnose ABI/runtime issues (e.g. x86_64 snapshot on an arm64 device). */
+  private fun logDeviceInfo() {
+    val abis = android.os.Build.SUPPORTED_ABIS.joinToString(",")
+    AppLog.log("device", "model=" + android.os.Build.MODEL + " sdk=" + android.os.Build.VERSION.SDK_INT +
+      " abis=[" + abis + "] debuggable=" + isDebuggable)
+  }
+
   private val directoryPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
     val callback = pendingPickCallback
     pendingPickCallback = null
@@ -113,6 +121,8 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    AppLog.init(this)
+    logDeviceInfo()
     val root = FrameLayout(this)
     webView = WebView(this).apply { id = View.generateViewId() }
     root.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -574,11 +584,22 @@ class MainActivity : ComponentActivity() {
         }
       }
     }
+    val copyLog = Button(this).apply {
+      text = getString(R.string.button_copy_log)
+      setOnClickListener {
+        val copied = AppLog.copyToClipboard(this@MainActivity)
+        showTestNotification(
+          getString(R.string.notif_log_copied),
+          getString(R.string.notif_log_copied_detail, copied.lineCount().toString()),
+        )
+      }
+    }
     guide.addView(engineStatus)
     guide.addView(progressText)
     guide.addView(openTermux)
     guide.addView(retry)
     guide.addView(update)
+    guide.addView(copyLog)
     return guide
   }
 
@@ -597,9 +618,13 @@ class MainActivity : ComponentActivity() {
     // in-flight guard prevents a double-threaded extract/start race (observed
     // on device: a double start kills the engine process).
     if (!engineFlowRunning.compareAndSet(false, true)) return
+    AppLog.log("boot", "engine flow start")
     Thread {
       try {
-        if (EngineProbe.check().optBoolean("running", false)) {
+        val probe = EngineProbe.check()
+        AppLog.log("boot", "probe before start: " + probe.optBoolean("running", false) +
+          " latency=" + probe.optInt("latencyMs", -1) + " error=" + probe.optString("error", "-"))
+        if (probe.optBoolean("running", false)) {
           runOnUiThread { showWeb() }
           return@Thread
         }
@@ -609,6 +634,7 @@ class MainActivity : ComponentActivity() {
             guideView.visibility = View.VISIBLE
             engineStatus.text = getString(R.string.status_first_extract)
           }
+          AppLog.log("boot", "extracting snapshot to " + engineManager.usrDir)
           val ok = engineManager.extractSnapshot { done, total ->
             runOnUiThread {
               // done is extracted bytes, total is the archive bytes — different
@@ -621,28 +647,44 @@ class MainActivity : ComponentActivity() {
               engineStatus.text = getString(R.string.status_extract_failed)
               showGuide()
             }
+            AppLog.log("boot", "extract FAILED")
             return@Thread
           }
+          AppLog.log("boot", "extract ok, engineReady=" + engineManager.engineReady)
         }
         if (!engineManager.startEngine()) {
           runOnUiThread {
             engineStatus.text = getString(R.string.status_engine_start_failed)
             showGuide()
           }
+          AppLog.log("boot", "startEngine() returned false")
           return@Thread
         }
         // Poll up to 30s for the web service.
+        var reached = false
         for (i in 0..30) {
           if (EngineProbe.check().optBoolean("running", false)) {
+            reached = true
             startEngineService()
             applyShizukuKeepAlive()
             runOnUiThread { showWeb() }
-            return@Thread
+            break
           }
           Thread.sleep(1000)
         }
+        if (!reached) {
+          AppLog.log("boot", "engine web service not reachable within 30s poll")
+          runOnUiThread {
+            engineStatus.text = getString(R.string.status_engine_timeout)
+            showGuide()
+          }
+        } else {
+          AppLog.log("boot", "engine reachable, showing web")
+        }
+      } catch (t: Throwable) {
+        AppLog.log("boot", "engine flow exception", t)
         runOnUiThread {
-          engineStatus.text = getString(R.string.status_engine_timeout)
+          engineStatus.text = getString(R.string.status_engine_start_failed)
           showGuide()
         }
       } finally {
