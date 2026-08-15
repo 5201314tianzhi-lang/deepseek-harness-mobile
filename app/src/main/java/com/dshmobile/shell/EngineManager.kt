@@ -373,11 +373,16 @@ class EngineManager(private val context: Context, private val pickToken: String?
 
   /** OPENSSL_CONF env override: point at the snapshot's own config when it
    *  exists (the compiled-in Termux path is unreadable from this package).
-   *  Returns a single-entry map or an empty map. */
+   *  Returns a single-entry map or an empty map.
+   *
+   *  NOTE: the archive entries carry a usr/ prefix and are extracted into
+   *  filesDir (usrDir.parentFile), so the file lives at filesDir/usr/etc/... —
+   *  the candidates below are relative to usrDir and must NOT repeat "usr".
+   */
   private fun opensslConfEnv(): Map<String, String> {
     for (candidate in listOf(
-      "usr/etc/tls/openssl.cnf",
-      "usr/etc/ssl/openssl.cnf",
+      "etc/tls/openssl.cnf",
+      "etc/ssl/openssl.cnf",
     )) {
       val f = File(usrDir, candidate)
       if (f.isFile) {
@@ -385,7 +390,9 @@ class EngineManager(private val context: Context, private val pickToken: String?
         return mapOf("OPENSSL_CONF" to f.absolutePath)
       }
     }
-    AppLog.log("engine", "no openssl.cnf found in snapshot; leaving OPENSSL_CONF unset")
+    AppLog.log("engine", "no openssl.cnf found in snapshot (checked " +
+      listOf("etc/tls/openssl.cnf", "etc/ssl/openssl.cnf").joinToString(", ") +
+      " under " + usrDir.absolutePath + "); leaving OPENSSL_CONF unset")
     return emptyMap()
   }
 
