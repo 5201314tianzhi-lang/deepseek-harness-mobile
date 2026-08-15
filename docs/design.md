@@ -210,6 +210,9 @@ SAF 目录选择本身无需权限（用户经系统选择器授权 tree URI）�
 - lint 不阻断（离线环境无 lint-gradle 缓存）。
 - 依赖：androidx.activity-ktx 1.13.0、commons-compress 1.28.0、xz 1.12、
   shizuku api/provider 13.1.5。
+- AGP 9 兼容：`android.builtInKotlin=false` + `android.newDsl=false`（AGP 9
+  默认启用内置 Kotlin 与新 DSL，与显式 KGP 不兼容；此组合为 flutter 生态
+  同款过渡配置，见 flutter/flutter#183910）。
 
 ## 10. ABI 与页大小
 
