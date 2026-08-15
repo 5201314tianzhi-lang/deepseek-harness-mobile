@@ -304,7 +304,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
       // The cooldown is only set after a real start; a failed path does not
       // consume the window so a retry can happen immediately.
       EngineManager.lastStartAttemptAt = now
-      AppLog.log("engine", "started pid=" + engineProcess?.pid() + " port=" + port +
+      AppLog.log("engine", "started port=" + port +
         " node=" + nodeBin.absolutePath + " arch=" + android.os.Build.SUPPORTED_ABIS.joinToString(","))
       true
     } catch (t: Throwable) {

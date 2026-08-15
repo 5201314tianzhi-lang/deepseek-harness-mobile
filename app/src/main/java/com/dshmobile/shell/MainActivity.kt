@@ -590,7 +590,7 @@ class MainActivity : ComponentActivity() {
         val copied = AppLog.copyToClipboard(this@MainActivity)
         showTestNotification(
           getString(R.string.notif_log_copied),
-          getString(R.string.notif_log_copied_detail, copied.lineCount().toString()),
+          getString(R.string.notif_log_copied_detail, copied.lines().size.toString()),
         )
       }
     }
