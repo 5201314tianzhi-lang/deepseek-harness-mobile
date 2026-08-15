@@ -29,7 +29,8 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          api-level: '36'
+          packages: 'platforms;android-36 platform-tools build-tools;36.0.0'
+          accept-android-sdk-licenses: 'true'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -62,7 +63,9 @@ jobs:
             -keypass android -dname "CN=dsh-mobile, OU=ci, O=dsh, L=cn, S=cn, C=cn"
 
       - name: Build release APK
-        run: ./gradlew assembleRelease
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
 
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk "dsh-apk-${{ steps.tag.outputs.tag }}.apk"
