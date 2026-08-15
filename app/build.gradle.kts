@@ -12,10 +12,14 @@ android {
   defaultConfig {
     applicationId = "com.dshmobile.shell"
     minSdk = 26
-    // targetSdk 34: Android 15+ forbids exec of app-data ELF for targetSdk 35+
-    // (the embedded engine, bash, and every child command would need linker64
-    // wrappers); 34 keeps native exec working on Android 15/16 devices.
-    targetSdk = 34
+    // targetSdk 28: the embedded engine must exec app-data ELF binaries.
+    // Android 10+ puts targetSdk 29+ apps in the untrusted_app_29 SELinux
+    // domain, which denies direct exec of app-data ELF (observed EACCES on
+    // Android 10/Huawei); targetSdk <= 28 keeps the legacy untrusted_app
+    // domain where exec is allowed (how Termux works on Android 10).
+    // Android 15/16 (which forbid app-data exec regardless) are covered by
+    // the /system/bin/linker64 fallback in EngineManager.startWithArgs.
+    targetSdk = 28
     versionCode = 1
     versionName = "0.1.0"
   }
