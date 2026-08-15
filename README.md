@@ -1,6 +1,6 @@
 # dsh-mobile-apk — DeepSeek Harness Android Shell APK
 
-> **dsh-mobile 生态** · [dsh-shell-termux](https://github.com/kelai141/dsh-shell-termux)（shell）· [dsh-client-ui-responsive](https://github.com/kelai141/dsh-client-ui-responsive)（移动 UI）· [dsh-host-web-compat](https://github.com/kelai141/dsh-host-web-compat)（浏览器兼容）· [dsh-mobile](https://github.com/kelai141/dsh-mobile)（协调仓库，private）
+> **dsh-mobile 生态** · [dsh-shell-termux](https://github.com/kelai141/dsh-shell-termux)（shell）· [dsh-client-ui-responsive](https://github.com/kelai141/dsh-client-ui-responsive)（移动 UI）· [dsh-host-web-compat](https://github.com/kelai141/dsh-host-web-compat)（浏览器兼容）
 
 Android shell for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): WebView UI
 over an **embedded Termux runtime snapshot** (extract-and-run, no Termux app needed), SAF directory
