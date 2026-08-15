@@ -78,6 +78,17 @@ object SnapshotExtractor {
             }
             execFiles.add(target.absolutePath)
           }
+          // Shared libraries (including dlopen'd native modules like
+          // node-pty's pty.node, whose DT_NEEDED libc++_shared.so is mode 0600
+          // in the archive) must not be writable either: vendor W^X refuses
+          // mmap PROT_EXEC of a writable file, so dlopen fails on Huawei/EMUI
+          // even though the module itself is r-x.
+          if (target.name.endsWith(".so") || target.name.endsWith(".node")) {
+            if (target.canWrite()) {
+              target.setWritable(false, false)
+              AppLog.log("extract", "lib write bit stripped (W^X): " + target.name)
+            }
+          }
         }
       }
       done += entry.size
