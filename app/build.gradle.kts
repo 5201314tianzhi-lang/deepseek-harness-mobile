@@ -25,9 +25,24 @@ android {
     noCompress += "xz"
   }
 
+  // CI signing: the release workflow drops a release.keystore at the project
+  // root and signs the release variant with it; local builds without the
+  // keystore keep producing the unsigned APK as before.
+  if (rootProject.file("release.keystore").exists()) {
+    signingConfigs.create("ci") {
+      storeFile = rootProject.file("release.keystore")
+      storePassword = System.getenv("RELEASE_STORE_PASSWORD") ?: "android"
+      keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "release"
+      keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: "android"
+    }
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false
+      if (rootProject.file("release.keystore").exists()) {
+        signingConfig = signingConfigs.getByName("ci")
+      }
     }
   }
 
