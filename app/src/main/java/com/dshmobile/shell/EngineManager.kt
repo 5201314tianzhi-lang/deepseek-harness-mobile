@@ -253,7 +253,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
     // SELinux domain and vendor, unlike the snapshot's termux-exec which only
     // handles untrusted_app_25/27). Fall back to the snapshot hook when the
     // bundled one is missing (should not happen on release builds).
-    val bundledHook = File(context.applicationInfo.nativeLibraryDir, "libexec-hook.so")
+    val bundledHook = resolveBundledHook()
     val snapshotHook = File(usrDir, "lib/libtermux-exec-ld-preload.so")
     val preloadPath: String
     val termuxExecEnv: Map<String, String>
@@ -368,6 +368,38 @@ class EngineManager(private val context: Context, private val pickToken: String?
       Log.w(TAG, "direct exec denied, falling back to linker64: " + e.message)
       AppLog.log("engine", "direct exec denied (" + e.message + "), falling back to linker64")
       build(listOf("/system/bin/linker64") + args.toList()).start()
+    }
+  }
+
+  /**
+   * Locate the bundled exec-reroute hook (libexec-hook.so). The NDK library
+   * ships in APK lib/<abi>/; with extractNativeLibs=false (AGP default) the
+   * installer does NOT extract it, so nativeLibraryDir has no real file —
+   * fall back to extracting it from the APK into filesDir.
+   */
+  private fun resolveBundledHook(): File? {
+    val native = File(context.applicationInfo.nativeLibraryDir, "libexec-hook.so")
+    if (native.isFile) return native
+    return try {
+      val abi = when {
+        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("arm64") } -> "arm64-v8a"
+        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("x86_64") } -> "x86_64"
+        else -> null
+      } ?: return null
+      val target = File(context.filesDir, "libexec-hook.so")
+      java.util.zip.ZipFile(context.applicationInfo.sourceDir).use { zip ->
+        val entry = zip.getEntry("lib/$abi/libexec-hook.so") ?: return null
+        zip.getInputStream(entry).use { input ->
+          target.outputStream().use { out -> input.copyTo(out) }
+        }
+      }
+      target.setExecutable(true, true)
+      target.setWritable(false, false) // W^X: preload libs must not be writable
+      AppLog.log("engine", "extracted bundled exec hook from APK -> " + target.absolutePath)
+      target
+    } catch (t: Throwable) {
+      AppLog.log("engine", "APK hook extraction failed", t)
+      null
     }
   }
 
