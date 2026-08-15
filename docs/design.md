@@ -201,9 +201,11 @@ SAF 目录选择本身无需权限（用户经系统选择器授权 tree URI）�
 
 ## 9. 构建与发布
 
-- JDK 17+、compileSdk 36、targetSdk 28（刻意：Android 10+ 将 targetSdk 29+
-  应用归入 untrusted_app_29 SELinux 域，禁止 exec app-data ELF——内嵌引擎依赖
-  直接 exec；Android 15/16 由 linker64 回退兜底）、minSdk 26。
+- JDK 17+、compileSdk 36、targetSdk 34（Android 15+ 的 app-data ELF exec
+  限制由 linker64 回退兜底；Android 10-14 的 untrusted_app 域允许 exec
+  app_data_file）、minSdk 26。
+- W^X 兼容：华为/EMUI 拒绝执行"可写+可执行"文件（Android 10 实测 EACCES），
+  解压器对可执行文件去除写位（rwx→r-x），引擎二进制运行时不写自身。
 - AGP 9.3.1、Kotlin 2.4.10、Gradle 9.7.0（wrapper）。
 - `snapshot.tar.xz` 不入库（GitHub Releases 分发）；缺失时构建 loud fail 并
   给出获取指引（scripts/make-snapshot.sh 为 Termux 端打包脚本）。
@@ -237,7 +239,7 @@ SAF 目录选择本身无需权限（用户经系统选择器授权 tree URI）�
 | D1 内嵌快照 vs 依赖 Termux | 内嵌 xz 快照，解压即跑 | 免安装、离线、版本自足；保留 Termux 探测兼容 |
 | D2 DSH_HOME 私有 + 数据项迁移 | 私有实体 + symlink 落公共 | FUSE 禁 symlink（apk#8） |
 | D3 更新完整性 | HTTPS + sha256 必填 | 明文+可空摘要 = RCE（I-01） |
-| D4 targetSdk | 28 | Android 10+ untrusted_app_29 域禁 exec app-data ELF（Android 10 华为实测 EACCES）；Android 15/16 由 linker64 兜底 |
+| D4 targetSdk | 34 | Android 15+ exec 限制由 linker64 兜底；华为 W^X（可写文件禁 exec）由解压去写位解决 |
 | D5 引擎并发 | 进程级 CAS + 90s 冷却 + 进程死亡清冷却 | 防 EADDRINUSE 双启动；崩溃快速恢复 |
 | D6 下载路径 | 应用内 HttpURLConnection → MediaStore | 浏览器导航带 Origin:null 被 dsh fence 403 |
 | D7 ACTION_UPDATE | 仅 debug | exported LAUNCHER activity 的任意触发面 |

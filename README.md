@@ -180,10 +180,10 @@ cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
 # output: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Build config: AGP 9.3.1, Kotlin 2.4.10, minSdk 26, targetSdk 28 (deliberate —
-Android 10+ puts targetSdk 29+ apps in the untrusted_app_29 SELinux domain,
-which denies exec of app-data ELF — the embedded engine needs it; Android
-15/16 are covered by the linker64 fallback). `snapshot.tar.xz` is excluded
+Build config: AGP 9.3.1, Kotlin 2.4.10, minSdk 26, targetSdk 34 (Android 15+
+app-data ELF exec restrictions are covered by the linker64 fallback). The
+extractor strips the write bit from executables (W^X: Huawei/EMUI refuse to
+execute writable files). `snapshot.tar.xz` is excluded
 from resource compression (`noCompress += "xz"`); lint is non-blocking for
 offline environments.
 

@@ -12,14 +12,14 @@ android {
   defaultConfig {
     applicationId = "com.dshmobile.shell"
     minSdk = 26
-    // targetSdk 28: the embedded engine must exec app-data ELF binaries.
-    // Android 10+ puts targetSdk 29+ apps in the untrusted_app_29 SELinux
-    // domain, which denies direct exec of app-data ELF (observed EACCES on
-    // Android 10/Huawei); targetSdk <= 28 keeps the legacy untrusted_app
-    // domain where exec is allowed (how Termux works on Android 10).
-    // Android 15/16 (which forbid app-data exec regardless) are covered by
-    // the /system/bin/linker64 fallback in EngineManager.startWithArgs.
-    targetSdk = 28
+    // targetSdk 34: Android 15+ forbids exec of app-data ELF for targetSdk 35+
+    // (covered by the /system/bin/linker64 fallback in startWithArgs); 34 also
+    // keeps the engine's direct exec working on Android 10-14, where the
+    // untrusted_app domain allows exec of app_data_file (AOSP sepolicy).
+    // Huawei/EMUI devices enforce a stricter W^X (executable files must not
+    // be writable) — handled in SnapshotExtractor by stripping the write bit
+    // from extracted executables.
+    targetSdk = 34
     versionCode = 1
     versionName = "0.1.0"
   }

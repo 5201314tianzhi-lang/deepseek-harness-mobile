@@ -3,10 +3,7 @@
 
   <uses-permission android:name="android.permission.INTERNET" />
   <!-- External workspace: the bash process needs access to user-picked
-       directories (Android 11+ scoped storage). targetSdk 28 keeps the legacy
-       storage path on Android 10+, where WRITE_EXTERNAL_STORAGE is required
-       to write public directories. -->
-  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+       directories (Android 11+ scoped storage). -->
   <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

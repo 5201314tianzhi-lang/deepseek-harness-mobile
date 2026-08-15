@@ -153,10 +153,9 @@ cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
 # 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
-构建配置：AGP 9.3.1、Kotlin 2.4.10、minSdk 26、targetSdk 28（刻意为之——
-Android 10+ 将 targetSdk 29+ 的应用归入 untrusted_app_29 SELinux 域，禁止
-exec app-data ELF（内嵌引擎依赖它）；Android 15/16 由 linker64 回退兜底）。
-`snapshot.tar.xz` 排除资源压缩
+构建配置：AGP 9.3.1、Kotlin 2.4.10、minSdk 26、targetSdk 34（Android 15+
+的 app-data ELF exec 限制由 linker64 回退兜底）。解压器会去除可执行文件的
+写权限（W^X：华为/EMUI 拒绝执行可写文件）。`snapshot.tar.xz` 排除资源压缩
 （`noCompress += "xz"`）；lint 对离线环境不阻断。
 
 ## 权限

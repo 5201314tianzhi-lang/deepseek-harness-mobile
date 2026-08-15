@@ -68,6 +68,14 @@ object SnapshotExtractor {
               target.setExecutable(true, false)
               AppLog.log("extract", "exec bit was lost, forced: " + target.name)
             }
+            // W^X compatibility: Huawei/EMUI (and Android 10 W^X hardening)
+            // reject executing files that are both writable and executable.
+            // The engine binaries never write themselves at runtime, so strip
+            // the write bit (rwx------ -> r-x------) to satisfy the check.
+            if (target.canWrite()) {
+              target.setWritable(false, false)
+              AppLog.log("extract", "write bit stripped (W^X): " + target.name)
+            }
             execFiles.add(target.absolutePath)
           }
         }
