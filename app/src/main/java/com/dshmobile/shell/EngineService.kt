@@ -55,6 +55,7 @@ class EngineService : Service() {
           exec.scheduleWithFixedDelay({
             if (!EngineProbe.check().optBoolean("running", false) && engineManager.engineReady) {
               AppLog.log("watchdog", "engine down, restarting")
+              AppLog.includeFile(java.io.File(this.filesDir, "engine.log"), "engine.log")
               engineManager.startEngine()
             }
           }, 5, 5, TimeUnit.SECONDS)

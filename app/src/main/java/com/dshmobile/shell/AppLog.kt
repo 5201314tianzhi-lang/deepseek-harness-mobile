@@ -65,7 +65,7 @@ object AppLog {
   }
 
   /** Include the tail of a file (e.g. engine.log) in the diagnostic log. */
-  fun includeFile(file: File, label: String, maxBytes: Int = 4096) {
+  fun includeFile(file: File, label: String, maxBytes: Int = 16 * 1024) {
     try {
       if (!file.exists()) {
         log("file", label + ": <missing>")
