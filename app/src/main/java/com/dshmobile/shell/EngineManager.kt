@@ -55,12 +55,41 @@ class EngineManager(private val context: Context, private val pickToken: String?
       AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + usrDir.parentFile)
       SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
       homeDir.mkdirs()
+      installBundledPtyNode()
       AppLog.log("extract", "done")
       true
     } catch (t: Throwable) {
       Log.e(TAG, "snapshot extract failed", t)
       AppLog.log("extract", "FAILED", t)
       false
+    }
+  }
+
+  /**
+   * Replace the snapshot's node-pty native module with the one cross-compiled
+   * in CI (node v24.18.0 headers + NDK, static libc++). The snapshot copy
+   * fails to dlopen on some devices ("Failed to load native module: pty.node"
+   * → engine exits); the bundled copy depends only on system libraries.
+   */
+  private fun installBundledPtyNode() {
+    val abi = if (android.os.Build.SUPPORTED_ABIS.any { it.startsWith("arm64") }) "arm64-v8a" else "x86_64"
+    val asset = "pty/pty-node-$abi.so"
+    val target = File(
+      usrDir,
+      "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
+    )
+    try {
+      context.assets.open(asset).use { input ->
+        target.parentFile?.mkdirs()
+        target.outputStream().use { out -> input.copyTo(out) }
+      }
+      // Executable for dlopen, not writable (W^X compliance, like the
+      // extractor strips on executables).
+      target.setExecutable(true, true)
+      target.setWritable(false, false)
+      AppLog.log("engine", "installed bundled pty.node (" + target.length() + " bytes) -> " + target.absolutePath)
+    } catch (t: Throwable) {
+      AppLog.log("engine", "bundled pty.node install failed; keeping the snapshot copy", t)
     }
   }
 

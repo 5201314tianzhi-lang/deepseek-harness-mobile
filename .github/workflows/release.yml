@@ -109,6 +109,42 @@ jobs:
           fi
           ls -la release.keystore
 
+      - name: Cross-compile node-pty for ${{ matrix.abi }}
+        run: |
+          # node-pty 1.1.0 (matches the snapshot) rebuilt against node v24.18.0
+          # headers (matches the snapshot node) with static libc++ so the
+          # module depends only on system libs. It replaces the snapshot's
+          # build/Release/pty.node at install time (the snapshot copy fails to
+          # dlopen on some devices).
+          NODE_VER=v24.18.0
+          curl -sL -o /tmp/node-headers.tar.gz "https://nodejs.org/download/release/$NODE_VER/node-$NODE_VER-headers.tar.gz"
+          mkdir -p /tmp/node-headers && tar -xzf /tmp/node-headers.tar.gz -C /tmp/node-headers --strip-components=1
+          mkdir -p /tmp/pty-build && cd /tmp/pty-build
+          npm init -y >/dev/null 2>&1
+          npm install node-pty@1.1.0 --ignore-scripts --no-save >/dev/null 2>&1
+          export NDK_TOOLCHAIN="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64"
+          if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
+            TRIPLE=aarch64-linux-android26
+            GYP_ARCH=arm64
+          else
+            TRIPLE=x86_64-linux-android26
+            GYP_ARCH=x64
+          fi
+          cd node_modules/node-pty
+          CC="$NDK_TOOLCHAIN/bin/$TRIPLE-clang" \
+          CXX="$NDK_TOOLCHAIN/bin/$TRIPLE-clang++" \
+          AR="$NDK_TOOLCHAIN/bin/llvm-ar" RANLIB="$NDK_TOOLCHAIN/bin/llvm-ranlib" \
+          CFLAGS="--target=$TRIPLE" \
+          CXXFLAGS="--target=$TRIPLE -static-libstdc++" \
+          LDFLAGS="--target=$TRIPLE -static-libstdc++" \
+          npx --no-install node-gyp rebuild --nodedir=/tmp/node-headers \
+            --arch=$GYP_ARCH --target_arch=$GYP_ARCH --release 2>&1 | tail -3
+          file build/Release/pty.node
+          readelf -d build/Release/pty.node | grep NEEDED || true
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/pty"
+          cp build/Release/pty.node "$GITHUB_WORKSPACE/app/src/main/assets/pty/pty-node-${{ matrix.abi }}.so"
+          ls -la "$GITHUB_WORKSPACE/app/src/main/assets/pty/"
+
       - name: Build release APK
         run: |
           chmod +x gradlew
