@@ -16,6 +16,11 @@
 - **运行时在线更新** — HTTPS manifest 驱动的快照替换（下载 → SHA-256 校验 →
   暂存解压 → 原子切换带回滚 → 看门狗自动重启）；运行中的运行时可自我更新，
   无需升级 APK。
+- **通用执行层** — 内置 `libexec-hook.so`（LD_PRELOAD）把引擎进程树中的一切
+  ELF 执行重路由到 `/system/bin/linker64`（Android 各版本/厂商一致允许的
+  native 库加载机制），覆盖 Android 15+ exec 禁令、华为/EMUI W^X 等场景。
+  主进程采用 direct exec → linker64 回退；解压出的可执行文件剥离写位
+  （rwx→r-x）满足 W^X。
 - **SAF 目录桥** — `pickDirectory` 把用户选择的目录映射为 bash 可直接访问的
   真实路径（`/storage/emulated/0/…`）。
 - **公共用户数据** — 设置、会话、存储、附件落在 `/storage/emulated/0/Documents/dshdata`

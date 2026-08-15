@@ -249,20 +249,35 @@ class EngineManager(private val context: Context, private val pickToken: String?
 
   /** Start the dsh web engine from the embedded snapshot. */
   fun startEngine(port: Int = 3080): Boolean {
-    // LD_PRELOAD depends on the termux-exec library inside the snapshot: if it
-    // is missing every child-process exec fails, and combined with the cooldown
-    // window the engine would silently stall for 90s — assert it before
-    // starting and fail loudly when absent.
-    val preload = File(usrDir, "lib/libtermux-exec-ld-preload.so")
-    if (!preload.exists()) {
-      Log.e(TAG, "engine start failed: termux-exec preload missing at " + preload.absolutePath)
-      AppLog.log("engine", "start refused: termux-exec preload missing at " + preload.absolutePath)
-      return false
+    // LD_PRELOAD: prefer the bundled universal exec-reroute hook (covers every
+    // SELinux domain and vendor, unlike the snapshot's termux-exec which only
+    // handles untrusted_app_25/27). Fall back to the snapshot hook when the
+    // bundled one is missing (should not happen on release builds).
+    val bundledHook = File(context.applicationInfo.nativeLibraryDir, "libexec-hook.so")
+    val snapshotHook = File(usrDir, "lib/libtermux-exec-ld-preload.so")
+    val preloadPath: String
+    val termuxExecEnv: Map<String, String>
+    if (bundledHook.exists()) {
+      preloadPath = bundledHook.absolutePath
+      termuxExecEnv = emptyMap()
+      AppLog.log("engine", "using bundled exec hook: " + bundledHook.absolutePath)
+    } else {
+      preloadPath = snapshotHook.absolutePath
+      termuxExecEnv = mapOf(
+        "TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE" to "force",
+        "TERMUX_EXEC__EXECVE_CALL__INTERCEPT" to "1",
+      )
+      AppLog.log("engine", "bundled exec hook missing, using snapshot termux-exec: " + snapshotHook.absolutePath)
+      if (!snapshotHook.exists()) {
+        Log.e(TAG, "engine start failed: no exec hook available at " + snapshotHook.absolutePath)
+        AppLog.log("engine", "start refused: no exec hook available")
+        return false
+      }
     }
     // Executability diagnostics: an exec EACCES on the engine binary is the
     // #1 cause of "engine start timeout". Record the actual permission bits.
     AppLog.log("engine", "node.canExecute=" + nodeBin.canExecute() +
-      " preload.canExecute=" + preload.canExecute() +
+      " hook.canExecute=" + File(preloadPath).canExecute() +
       " node.length=" + nodeBin.length() + " usr=" + usrDir.canRead() + "/" + usrDir.canExecute())
     val now = System.currentTimeMillis()
     // Process-level CAS: only one concurrent caller actually starts the engine
@@ -295,15 +310,11 @@ class EngineManager(private val context: Context, private val pickToken: String?
         // os.tmpdir() falls back to the baked-in Termux tmp on Android
         // (unwritable from the app domain); keep spill inside filesDir.
         "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
-        // Android 16 forbids exec of app-data ELF regardless of targetSdk
-        // (observed on Android 16/vivo: direct exec EACCES even at targetSdk
-        // 34). Termux's execve hook re-routes denied execs through
-        // /system/bin/linker64 (same mechanism as JNI libs); the snapshot
-        // ships libtermux-exec-*-ld-preload.so. The hook only rewrites for
-        // untrusted_app_25/27 SELinux domains, so force mode is required.
-        "LD_PRELOAD" to preload.absolutePath,
-        "TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE" to "force",
-        "TERMUX_EXEC__EXECVE_CALL__INTERCEPT" to "1",
+        // LD_PRELOAD: the exec-reroute hook. Every process loaded via
+        // linker64 inherits it, so child execs are rerouted across the whole
+        // engine tree. The snapshot's termux-exec variant additionally needs
+        // the TERMUX_EXEC__* env (see termuxExecEnv above).
+        "LD_PRELOAD" to preloadPath,
         "TERMUX__ROOTFS" to usrDir.parentFile.absolutePath,
         "TERMUX__PREFIX" to usrDir.absolutePath,
         "TERMUX_APP__DATA_DIR" to context.filesDir.parentFile.absolutePath,
@@ -312,7 +323,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
         // Auth token for the directory-pick bridge endpoint (validated by the
         // web-compat plugin as x-dsh-pick-token).
         "DSH_PICK_TOKEN" to (pickToken ?: ""),
-      )
+      ) + termuxExecEnv
       engineProcess = startWithArgs(args, env)
       // The cooldown is only set after a real start; a failed path does not
       // consume the window so a retry can happen immediately.

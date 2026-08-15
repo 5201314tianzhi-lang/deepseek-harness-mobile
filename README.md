@@ -20,6 +20,15 @@ APK installs a full dsh web agent that can actually execute bash.
   SHA-256 verify → staged extraction → atomic switch with rollback →
   auto-restart via the watchdog); the running runtime can update itself
   without an APK update.
+- **Universal exec layer** — a bundled `libexec-hook.so` (LD_PRELOAD)
+  reroutes every ELF exec in the engine tree through `/system/bin/linker64`,
+  the mechanism Android permits for app data on all versions and vendors
+  (Android 15+ exec bans, Huawei/EMUI W^X). The main process uses a
+  direct-exec → linker64 fallback; extracted executables get the write bit
+  stripped (rwx→r-x) for W^X compliance.
+  SHA-256 verify → staged extraction → atomic switch with rollback →
+  auto-restart via the watchdog); the running runtime can update itself
+  without an APK update.
 - **SAF directory bridge** — `pickDirectory` maps a user-picked tree to a
   real path (`/storage/emulated/0/…`) the bash process can access directly.
 - **Public user data** — settings, sessions, storages and attachments live in

@@ -65,6 +65,35 @@ ShizukuSupport —— 可选 Shizuku 状态检测
 
 ## 4. 引擎生命周期与并发控制
 
+### 4.0 通用执行层（exec 重路由）
+
+**问题**：Android 在多种场景拒绝直接 exec app-data ELF：
+- Android 15+（targetSdk 35+ 策略）；
+- 厂商 W^X 强化（华为/EMUI 拒绝"可写+可执行"文件，Android 10 实测 EACCES）；
+- 各版本/厂商差异无法逐一兼容。
+
+**方案**：APK 内置自研 `libexec-hook.so`（NDK，双 ABI），`LD_PRELOAD` 注入
+引擎进程树，拦截 `execve/execv/execvp/execvpe`：
+
+- 目标为 ELF 时，重路由为 `execve(/system/bin/linker64, [linker64, path, argv...])`
+  ——系统链接器以"加载 native 库"的机制加载目标（全版本、全厂商一致允许）；
+- 非 ELF（脚本/shebang）与 linker 自身直接放行；重路由失败（ENOENT/EACCES）
+  回退原始 syscall；
+- `LD_PRELOAD` 随 linker64 加载的进程树继承，重路由覆盖全部子进程
+  （node 插件、bash、工具链）；
+- 不依赖 SELinux 域判断（区别于快照 termux-exec 仅豁免 untrusted_app_25/27）。
+
+**三层防护**（通用，无版本/厂商特判）：
+
+| 层 | 机制 | 覆盖 |
+|---|---|---|
+| 主进程 | direct exec → EACCES 时 linker64 fallback（startWithArgs） | 全部 |
+| 子进程 | LD_PRELOAD exec-hook 重路由 → linker64 | 全部 |
+| 文件级 | 解压时剥离可执行文件写位（rwx→r-x） | 华为类 W^X |
+
+**已知限制**：内核解析 shebang 后的解释器 exec 不经 libc，hook 无法拦截——
+Android 15/16 上 `.sh` 脚本类工具仍受限（引擎核心为 node ELF，不受影响）。
+
 ### 4.1 启动流程（MainActivity.startEngineFlow）
 
 1. 探测引擎；运行中 → `showWeb()`。
@@ -211,8 +240,9 @@ SAF 目录选择本身无需权限（用户经系统选择器授权 tree URI）�
   给出获取指引（scripts/make-snapshot.sh 为 Termux 端打包脚本）。
 - `noCompress += "xz"`：防二次压缩破坏 `openFd`。
 - lint 不阻断（离线环境无 lint-gradle 缓存）。
+- 引擎启动超时诊断：node.canExecute / 进程存活 / engine.log 全文入 AppLog；
 - 依赖：androidx.activity-ktx 1.13.0、commons-compress 1.28.0、xz 1.12、
-  shizuku api/provider 13.1.5。
+  shizuku api/provider 13.1.5；NDK 27.2.12479018（exec-hook 编译）。
 - AGP 9 兼容：`android.builtInKotlin=false` + `android.newDsl=false`（AGP 9
   默认启用内置 Kotlin 与新 DSL，与显式 KGP 不兼容；此组合为 flutter 生态
   同款过渡配置，见 flutter/flutter#183910）。

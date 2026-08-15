@@ -8,6 +8,7 @@ plugins {
 android {
   namespace = "com.dshmobile.shell"
   compileSdk = 36
+  ndkVersion = "27.2.12479018"
 
   defaultConfig {
     applicationId = "com.dshmobile.shell"
@@ -27,6 +28,14 @@ android {
   androidResources {
     // snapshot.tar.xz is already xz-compressed; double-compressing it breaks openFd.
     noCompress += "xz"
+  }
+
+  // Universal exec reroute hook (src/main/cpp): built for both ABIs and
+  // shipped as libexec-hook.so, LD_PRELOADed into the engine process tree.
+  externalNativeBuild {
+    cmake {
+      path = file("src/main/cpp/CMakeLists.txt")
+    }
   }
 
   // CI signing: the release workflow drops a release.keystore at the project
