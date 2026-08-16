@@ -84,7 +84,9 @@ class ExportFlow(
   }
 
   /** Write to MediaStore.Downloads (permission-free on Android 10+), streaming
-   *  with a 200MB cap. */
+   *  with a 200MB cap. Callers must guard for SDK_INT < 29 (downloadToDownloads
+   *  rejects before reaching here). */
+  @androidx.annotation.RequiresApi(29)
   private fun saveToDownloadsStreamed(
     filename: String,
     input: java.io.InputStream,
