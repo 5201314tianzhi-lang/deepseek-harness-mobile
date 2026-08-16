@@ -23,7 +23,6 @@ import java.util.concurrent.TimeUnit
  * never kills it).
  */
 class EngineService : Service() {
-
   private lateinit var engineManager: EngineManager
   private var watchdog: ScheduledExecutorService? = null
   private var ensureRunner: java.util.concurrent.ExecutorService? = null
@@ -34,7 +33,11 @@ class EngineService : Service() {
     startForeground(NOTIFICATION_ID, buildNotification())
   }
 
-  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+  override fun onStartCommand(
+    intent: Intent?,
+    flags: Int,
+    startId: Int,
+  ): Int {
     AppLog.log("watchdog", "service start")
     ensureEngine()
     return START_STICKY
@@ -81,20 +84,21 @@ class EngineService : Service() {
    *  scheduleWithFixedDelay task that throws is silently suppressed forever. */
   private fun armWatchdog() {
     if (watchdog != null) return
-    watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
-      exec.scheduleWithFixedDelay({
-        try {
-          val running = EngineProbe.check().optBoolean("running", false)
-          if (!running && engineManager.engineReady) {
-            AppLog.log("watchdog", "engine down, restarting")
-            AppLog.includeFile(java.io.File(this.filesDir, DshPaths.ENGINE_LOG), DshPaths.ENGINE_LOG)
-            engineManager.startEngine()
+    watchdog =
+      Executors.newSingleThreadScheduledExecutor().also { exec ->
+        exec.scheduleWithFixedDelay({
+          try {
+            val running = EngineProbe.check().optBoolean("running", false)
+            if (!running && engineManager.engineReady) {
+              AppLog.log("watchdog", "engine down, restarting")
+              AppLog.includeFile(java.io.File(this.filesDir, DshPaths.ENGINE_LOG), DshPaths.ENGINE_LOG)
+              engineManager.startEngine()
+            }
+          } catch (t: Throwable) {
+            AppLog.log("watchdog", "watchdog tick failed", t)
           }
-        } catch (t: Throwable) {
-          AppLog.log("watchdog", "watchdog tick failed", t)
-        }
-      }, 5, 5, TimeUnit.SECONDS)
-    }
+        }, 5, 5, TimeUnit.SECONDS)
+      }
   }
 
   private fun buildNotification(): android.app.Notification {
@@ -102,15 +106,22 @@ class EngineService : Service() {
     if (Build.VERSION.SDK_INT >= 26) {
       manager.createNotificationChannel(
         NotificationChannel(
-          DshPaths.NOTIFICATION_CHANNEL, "dsh engine", NotificationManager.IMPORTANCE_LOW,
+          DshPaths.NOTIFICATION_CHANNEL,
+          "dsh engine",
+          NotificationManager.IMPORTANCE_LOW,
         ),
       )
     }
     val content = android.content.Intent(this, MainActivity::class.java)
-    val pending = PendingIntent.getActivity(
-      this, 0, content, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-    )
-    return NotificationCompat.Builder(this, DshPaths.NOTIFICATION_CHANNEL)
+    val pending =
+      PendingIntent.getActivity(
+        this,
+        0,
+        content,
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+      )
+    return NotificationCompat
+      .Builder(this, DshPaths.NOTIFICATION_CHANNEL)
       .setSmallIcon(com.dshmobile.shell.R.mipmap.ic_launcher)
       .setContentTitle(getString(R.string.engine_notification_title))
       .setContentText(getString(R.string.engine_notification_text))

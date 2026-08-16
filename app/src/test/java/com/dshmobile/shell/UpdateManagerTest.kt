@@ -1,8 +1,6 @@
 package com.dshmobile.shell
 
 import android.content.Context
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -10,6 +8,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Update protocol guards: HTTPS-only manifest, single-flight concurrency
@@ -20,7 +20,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class UpdateManagerTest {
-
   private fun context(): Context = org.robolectric.RuntimeEnvironment.getApplication()
 
   @Test
@@ -51,7 +50,9 @@ class UpdateManagerTest {
     val second = UpdateManager(ctx)
     second.checkAndApply { statuses.add(it) }
     // A third concurrent call must report "in progress" immediately (CAS).
-    val inProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+    val inProgress =
+      java.util.concurrent.atomic
+        .AtomicBoolean(false)
     val latch = CountDownLatch(1)
     val third = UpdateManager(ctx)
     third.checkAndApply {
@@ -68,7 +69,9 @@ class UpdateManagerTest {
   fun `unreachable manifest surfaces a failed status`() {
     val ctx = context()
     val manager = UpdateManager(ctx).apply { manifestUrl = "https://127.0.0.1:1/manifest.json" }
-    val result = java.util.concurrent.atomic.AtomicReference<String>()
+    val result =
+      java.util.concurrent.atomic
+        .AtomicReference<String>()
     val latch = CountDownLatch(1)
     manager.checkAndApply {
       result.set(it)

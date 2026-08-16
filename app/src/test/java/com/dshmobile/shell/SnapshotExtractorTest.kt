@@ -1,8 +1,5 @@
 package com.dshmobile.shell
 
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.File
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
@@ -13,6 +10,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.File
 
 /**
  * Extraction safety net: traversal guard, symlink/hard-link handling,
@@ -20,7 +20,6 @@ import org.junit.rules.TemporaryFolder
  * previously stripped files (interrupted-extraction recovery).
  */
 class SnapshotExtractorTest {
-
   @get:Rule
   val tmp = TemporaryFolder()
 
@@ -32,7 +31,7 @@ class SnapshotExtractorTest {
       for ((name, link, content) in entries) {
         val entry = TarArchiveEntry(name)
         if (link == "DIR") {
-          entry.setMode(0o755)
+          entry.setMode(0x1ED) // 0o755 — Kotlin has no octal literals
           tar.putArchiveEntry(entry)
           tar.closeArchiveEntry()
         } else if (link == "SYM") {
@@ -47,7 +46,7 @@ class SnapshotExtractorTest {
           tar.closeArchiveEntry()
         } else {
           entry.setSize(content.size.toLong())
-          entry.setMode(0o755) // executable by default for the W^X tests
+          entry.setMode(0x1ED) // 0o755 — Kotlin has no octal literals
           tar.putArchiveEntry(entry)
           tar.write(content)
           tar.closeArchiveEntry()
@@ -57,7 +56,10 @@ class SnapshotExtractorTest {
     return out.toByteArray()
   }
 
-  private fun extract(bytes: ByteArray, dest: File) {
+  private fun extract(
+    bytes: ByteArray,
+    dest: File,
+  ) {
     val tar = TarArchiveInputStream(ByteArrayInputStream(bytes))
     SnapshotExtractor.extractTar(tar, dest)
     tar.close()
@@ -66,11 +68,16 @@ class SnapshotExtractorTest {
   @Test
   fun `plain files and directories extract with exec bits`() {
     val dest = tmp.newFolder("a")
-    extract(buildTar(listOf(
-      Triple("usr", "DIR", ByteArray(0)),
-      Triple("usr/bin", "DIR", ByteArray(0)),
-      Triple("usr/bin/tool", "", "#!/bin/sh\n".toByteArray()),
-    )), dest)
+    extract(
+      buildTar(
+        listOf(
+          Triple("usr", "DIR", ByteArray(0)),
+          Triple("usr/bin", "DIR", ByteArray(0)),
+          Triple("usr/bin/tool", "", "#!/bin/sh\n".toByteArray()),
+        ),
+      ),
+      dest,
+    )
     val tool = File(dest, "usr/bin/tool")
     assertTrue(tool.isFile)
     assertTrue(tool.canExecute())
@@ -81,9 +88,10 @@ class SnapshotExtractorTest {
   @Test
   fun `traversal via dotdot is rejected`() {
     val dest = tmp.newFolder("b")
-    val e = assertThrows(java.io.IOException::class.java) {
-      extract(buildTar(listOf(Triple("../evil", "", "x".toByteArray()))), dest)
-    }
+    val e =
+      assertThrows(java.io.IOException::class.java) {
+        extract(buildTar(listOf(Triple("../evil", "", "x".toByteArray()))), dest)
+      }
     assertTrue(e.message!!.contains("escapes"))
     assertFalse(File(dest, "evil").exists())
   }
@@ -100,13 +108,23 @@ class SnapshotExtractorTest {
   @Test
   fun `symlink entries are preserved`() {
     val dest = tmp.newFolder("d")
-    extract(buildTar(listOf(
-      Triple("usr", "DIR", ByteArray(0)),
-      Triple("usr/link", "SYM", "target".toByteArray()),
-    )), dest)
+    extract(
+      buildTar(
+        listOf(
+          Triple("usr", "DIR", ByteArray(0)),
+          Triple("usr/link", "SYM", "target".toByteArray()),
+        ),
+      ),
+      dest,
+    )
     val link = File(dest, "usr/link")
-    assertTrue(java.nio.file.Files.isSymbolicLink(link.toPath()))
-    val target = java.nio.file.Files.readSymbolicLink(link.toPath())
+    assertTrue(
+      java.nio.file.Files
+        .isSymbolicLink(link.toPath()),
+    )
+    val target =
+      java.nio.file.Files
+        .readSymbolicLink(link.toPath())
     assertTrue(target.toString().endsWith("target"))
   }
 
@@ -115,27 +133,46 @@ class SnapshotExtractorTest {
     val dest = tmp.newFolder("e")
     // First run creates the dangling link (target entry never arrives).
     extract(buildTar(listOf(Triple("usr/link", "SYM", "missing".toByteArray()))), dest)
-    assertTrue(java.nio.file.Files.isSymbolicLink(File(dest, "usr/link").toPath()))
+    assertTrue(
+      java.nio.file.Files
+        .isSymbolicLink(File(dest, "usr/link").toPath()),
+    )
     // Second run over the same tree must succeed (isSymbolicLink-based delete).
-    extract(buildTar(listOf(
-      Triple("usr", "DIR", ByteArray(0)),
-      Triple("usr/link", "SYM", "missing".toByteArray()),
-    )), dest)
-    assertTrue(java.nio.file.Files.isSymbolicLink(File(dest, "usr/link").toPath()))
+    extract(
+      buildTar(
+        listOf(
+          Triple("usr", "DIR", ByteArray(0)),
+          Triple("usr/link", "SYM", "missing".toByteArray()),
+        ),
+      ),
+      dest,
+    )
+    assertTrue(
+      java.nio.file.Files
+        .isSymbolicLink(File(dest, "usr/link").toPath()),
+    )
   }
 
   @Test
   fun `hard link entries are materialized as copies`() {
     val dest = tmp.newFolder("f")
-    extract(buildTar(listOf(
-      Triple("usr", "DIR", ByteArray(0)),
-      Triple("usr/real", "", "payload-content".toByteArray()),
-      Triple("usr/hard", "HARD", "usr/real".toByteArray()),
-    )), dest)
+    extract(
+      buildTar(
+        listOf(
+          Triple("usr", "DIR", ByteArray(0)),
+          Triple("usr/real", "", "payload-content".toByteArray()),
+          Triple("usr/hard", "HARD", "usr/real".toByteArray()),
+        ),
+      ),
+      dest,
+    )
     val hard = File(dest, "usr/hard")
     assertTrue(hard.isFile)
     assertEquals("payload-content", hard.readText())
-    assertFalse(java.nio.file.Files.isSymbolicLink(hard.toPath()))
+    assertFalse(
+      java.nio.file.Files
+        .isSymbolicLink(hard.toPath()),
+    )
   }
 
   @Test
@@ -154,10 +191,13 @@ class SnapshotExtractorTest {
   @Test
   fun `progress callback reports total bytes`() {
     val dest = tmp.newFolder("h")
-    val bytes = buildTar(listOf(
-      Triple("a", "", "aaa".toByteArray()),
-      Triple("b", "", "bbbbb".toByteArray()),
-    ))
+    val bytes =
+      buildTar(
+        listOf(
+          Triple("a", "", "aaa".toByteArray()),
+          Triple("b", "", "bbbbb".toByteArray()),
+        ),
+      )
     var reported = 0L
     val tar = TarArchiveInputStream(ByteArrayInputStream(bytes))
     SnapshotExtractor.extractTar(tar, dest) { done -> reported = done }
@@ -171,29 +211,43 @@ class SnapshotExtractorTest {
     // A VALID xz stream carrying a traversal entry: the error surfaces inside
     // extractTar (after XZ construction), so the finally must close the input.
     val tarBytes = buildTar(listOf(Triple("../evil", "", "x".toByteArray())))
-    val xzBytes = java.io.ByteArrayOutputStream().use { out ->
-      org.apache.commons.compress.compressors.xz.XZCompressorOutputStream(out).use { xz ->
-        xz.write(tarBytes)
-      }
-      out.toByteArray()
-    }
-    val closed = java.util.concurrent.atomic.AtomicBoolean(false)
-    val wrapped = object : java.io.InputStream() {
-      override fun read(): Int = xzBytes.let { if (pos < it.size) it[pos++].toInt() else -1 }
-      override fun read(b: ByteArray, off: Int, len: Int): Int = xzBytes.let {
-        if (pos >= it.size) -1 else {
-          val n = minOf(len, it.size - pos)
-          System.arraycopy(it, pos, b, off, n)
-          pos += n
-          n
+    val xzBytes =
+      java.io.ByteArrayOutputStream().use { out ->
+        org.apache.commons.compress.compressors.xz.XZCompressorOutputStream(out).use { xz ->
+          xz.write(tarBytes)
         }
+        out.toByteArray()
       }
-      override fun close() {
-        closed.set(true)
-        super.close()
+    val closed =
+      java.util.concurrent.atomic
+        .AtomicBoolean(false)
+    val wrapped =
+      object : java.io.InputStream() {
+        override fun read(): Int = xzBytes.let { if (pos < it.size) it[pos++].toInt() else -1 }
+
+        override fun read(
+          b: ByteArray,
+          off: Int,
+          len: Int,
+        ): Int =
+          xzBytes.let {
+            if (pos >= it.size) {
+              -1
+            } else {
+              val n = minOf(len, it.size - pos)
+              System.arraycopy(it, pos, b, off, n)
+              pos += n
+              n
+            }
+          }
+
+        override fun close() {
+          closed.set(true)
+          super.close()
+        }
+
+        private var pos = 0
       }
-      private var pos = 0
-    }
     assertThrows(java.io.IOException::class.java) {
       SnapshotExtractor.extract(wrapped, xzBytes.size.toLong(), dest) { _, _ -> }
     }

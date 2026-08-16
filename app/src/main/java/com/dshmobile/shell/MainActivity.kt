@@ -18,7 +18,6 @@ import java.io.File
  * export in ExportFlow, notifications in NotificationHelper.
  */
 class MainActivity : ComponentActivity() {
-
   private lateinit var harness: HarnessWebView
   private lateinit var wizard: GuideWizard
   private lateinit var picker: PickerBridge
@@ -30,11 +29,18 @@ class MainActivity : ComponentActivity() {
    *  engine or backgrounding would kill a healthy process that the watchdog
    *  then cold-boots again. */
   private val engineManager by lazy { EngineManager(this) }
-  private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+  private val engineFlowRunning =
+    java.util.concurrent.atomic
+      .AtomicBoolean(false)
+
   /** Engine launch in flight (guards the Launch button against double taps). */
-  private val launchInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+  private val launchInFlight =
+    java.util.concurrent.atomic
+      .AtomicBoolean(false)
+
   /** True while the setup wizard asked the user to press Launch manually. */
   private var manualLaunchRequired = false
+
   /** Screen-on wake lock: reuse a single instance (I-04 — otherwise the lock
    *  could never be released and multiple locks would leak). */
   private var wakeLock: PowerManager.WakeLock? = null
@@ -59,7 +65,9 @@ class MainActivity : ComponentActivity() {
   private fun markConsentSeen() {
     try {
       getSharedPreferences("dsh_prefs", Context.MODE_PRIVATE)
-        .edit().putBoolean("consent_seen", true).apply()
+        .edit()
+        .putBoolean("consent_seen", true)
+        .apply()
     } catch (_: Exception) {
       // Best effort: a failed write only re-shows the consent page once.
     }
@@ -69,7 +77,6 @@ class MainActivity : ComponentActivity() {
    *  a package rename never leaves a stale action literal. */
   private val actionUpdate: String get() = packageName + ".action.UPDATE"
 
-
   /** AGP 8 does not generate BuildConfig by default; use the debuggable flag. */
   private val isDebuggable: Boolean
     get() = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
@@ -77,9 +84,14 @@ class MainActivity : ComponentActivity() {
   /** Record device/env facts once, so bug reports carry the context needed to
    *  diagnose ABI/runtime issues (e.g. x86_64 snapshot on an arm64 device). */
   private fun logDeviceInfo() {
-    val abis = android.os.Build.SUPPORTED_ABIS.joinToString(",")
-    AppLog.log("device", "model=" + android.os.Build.MODEL + " sdk=" + android.os.Build.VERSION.SDK_INT +
-      " abis=[" + abis + "] debuggable=" + isDebuggable)
+    val abis =
+      android.os.Build.SUPPORTED_ABIS
+        .joinToString(",")
+    AppLog.log(
+      "device",
+      "model=" + android.os.Build.MODEL + " sdk=" + android.os.Build.VERSION.SDK_INT +
+        " abis=[" + abis + "] debuggable=" + isDebuggable,
+    )
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -92,42 +104,53 @@ class MainActivity : ComponentActivity() {
       runOnUiThread { notifyHelper.showTestNotification(title, text) }
     }
     export = ExportFlow(this, onNotify, { ok, detail -> pushExportResult(ok, detail) })
-    picker = PickerBridge(
-      this,
-      onDirectoryPicked = { callbackId, path ->
-        harness.postScript(
-          "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", " +
-            (path?.let { jsString(it) } ?: "null") + ")",
-        )
-      },
-      onPermissionRequired = { harness.postScript("window.__dshBridge?.onPermissionRequired?.()") },
-      notify = onNotify,
-    )
+    picker =
+      PickerBridge(
+        this,
+        onDirectoryPicked = { callbackId, path ->
+          harness.postScript(
+            "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", " +
+              (path?.let { jsString(it) } ?: "null") + ")",
+          )
+        },
+        onPermissionRequired = { harness.postScript("window.__dshBridge?.onPermissionRequired?.()") },
+        notify = onNotify,
+      )
     picker.restoreState(savedInstanceState)
-    harness = HarnessWebView(
-      this, picker, export, onNotify,
-      onEngineError = { showGuide() },
-      onKeepScreen = { keepScreenOn(it) },
-      pickToken = EngineManager.pickToken,
-    )
-    wizard = GuideWizard(
-      this, harness.view,
-      onPrimaryAction = { if (manualLaunchRequired) launchEngine() else startEngineFlow() },
-      onCheckUpdate = { statusCb ->
-        // UpdateManager's worker thread reports status directly; the wizard
-        // UI must only be touched on the main thread.
-        UpdateManager(this).checkAndApply { status -> runOnUiThread { statusCb(status) } }
-      },
-      onCopyLog = { copyLog() },
-      onBackToHarness = { showWeb() },
-      onKeepAlive = { showKeepAlivePanel() },
-    )
+    harness =
+      HarnessWebView(
+        this,
+        picker,
+        export,
+        onNotify,
+        onEngineError = { showGuide() },
+        onKeepScreen = { keepScreenOn(it) },
+        pickToken = EngineManager.pickToken,
+      )
+    wizard =
+      GuideWizard(
+        this,
+        harness.view,
+        onPrimaryAction = { if (manualLaunchRequired) launchEngine() else startEngineFlow() },
+        onCheckUpdate = { statusCb ->
+          // UpdateManager's worker thread reports status directly; the wizard
+          // UI must only be touched on the main thread.
+          UpdateManager(this).checkAndApply { status -> runOnUiThread { statusCb(status) } }
+        },
+        onCopyLog = { copyLog() },
+        onBackToHarness = { showWeb() },
+        onKeepAlive = { showKeepAlivePanel() },
+      )
 
-    val root = FrameLayout(this).apply {
-      setBackgroundColor(0xFFFFFFFF.toInt())
-    }
+    val root =
+      FrameLayout(this).apply {
+        setBackgroundColor(0xFFFFFFFF.toInt())
+      }
     root.addView(harness.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    root.addView(wizard.topStatusBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.TOP))
+    root.addView(
+      wizard.topStatusBar,
+      FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.TOP),
+    )
     root.addView(wizard.guideView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     setContentView(root)
     harness.configure()
@@ -135,8 +158,9 @@ class MainActivity : ComponentActivity() {
     // Quick path: snapshot AND mandatory container already provisioned →
     // go straight to the Harness; the cold start is covered by the thin
     // status bar, not the full-screen guide.
-    val provisioned = File(filesDir, DshPaths.USR_DIR + "/" + DshPaths.NODE_BIN).isFile &&
-      File(filesDir, DshPaths.ROOTFS_DIR + "/" + DshPaths.ROOTFS_BASH).isFile
+    val provisioned =
+      File(filesDir, DshPaths.USR_DIR + "/" + DshPaths.NODE_BIN).isFile &&
+        File(filesDir, DshPaths.ROOTFS_DIR + "/" + DshPaths.ROOTFS_BASH).isFile
     if (provisioned) {
       harness.view.visibility = View.VISIBLE
     } else {
@@ -212,7 +236,10 @@ class MainActivity : ComponentActivity() {
 
   /** Report the export result to the WebView: the UI plugin shows an in-app
    *  result dialog via window.__dshExportResult. */
-  private fun pushExportResult(ok: Boolean, detail: String) {
+  private fun pushExportResult(
+    ok: Boolean,
+    detail: String,
+  ) {
     val title = if (ok) getString(R.string.export_success) else getString(R.string.export_failed)
     val payload = "{\"ok\":" + ok + ",\"title\":" + jsString(title) + ",\"detail\":" + jsString(detail) + "}"
     harness.postScript("window.__dshExportResult && window.__dshExportResult(" + payload + ")")
@@ -228,9 +255,12 @@ class MainActivity : ComponentActivity() {
 
   private fun keepScreenOn(enable: Boolean) {
     val power = getSystemService(Context.POWER_SERVICE) as PowerManager
-    val lock = wakeLock ?: power.newWakeLock(
-      PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE, DshPaths.WAKE_LOCK_TAG,
-    ).also { wakeLock = it }
+    val lock =
+      wakeLock ?: power
+        .newWakeLock(
+          PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+          DshPaths.WAKE_LOCK_TAG,
+        ).also { wakeLock = it }
     if (enable && !lock.isHeld) lock.acquire()
     if (!enable && lock.isHeld) lock.release()
   }
@@ -252,8 +282,11 @@ class MainActivity : ComponentActivity() {
     Thread {
       try {
         val probe = EngineProbe.check()
-        AppLog.log("boot", "probe before start: " + probe.optBoolean("running", false) +
-          " latency=" + probe.optInt("latencyMs", -1) + " error=" + probe.optString("error", "-"))
+        AppLog.log(
+          "boot",
+          "probe before start: " + probe.optBoolean("running", false) +
+            " latency=" + probe.optInt("latencyMs", -1) + " error=" + probe.optString("error", "-"),
+        )
         if (probe.optBoolean("running", false)) {
           runOnUiThread { showWeb() }
           return@Thread
@@ -266,15 +299,18 @@ class MainActivity : ComponentActivity() {
             wizard.showGuideStatus(getString(R.string.status_first_extract), null, true)
           }
           AppLog.log("boot", "extracting snapshot to " + engineManager.usrDir)
-          val ok = engineManager.extractSnapshot { done, _ ->
-            runOnUiThread {
-              // done is extracted bytes; total is the archive bytes (different
-              // baselines) — show only the extracted amount.
-              wizard.showGuideStatus(
-                getString(R.string.status_extracting, done / 1024 / 1024), null, true,
-              )
+          val ok =
+            engineManager.extractSnapshot { done, _ ->
+              runOnUiThread {
+                // done is extracted bytes; total is the archive bytes (different
+                // baselines) — show only the extracted amount.
+                wizard.showGuideStatus(
+                  getString(R.string.status_extracting, done / 1024 / 1024),
+                  null,
+                  true,
+                )
+              }
             }
-          }
           if (!ok) {
             runOnUiThread {
               wizard.showGuideError(getString(R.string.status_extract_failed))
@@ -314,8 +350,11 @@ class MainActivity : ComponentActivity() {
           setupRan = true
           AppLog.log("boot", "container init: rootfs installed")
         }
-        AppLog.log("boot", "container init: proot runtime=" + proot.ensureInitialized() +
-          " rootfs=" + proot.rootfsReady())
+        AppLog.log(
+          "boot",
+          "container init: proot runtime=" + proot.ensureInitialized() +
+            " rootfs=" + proot.rootfsReady(),
+        )
         val smoke = containerProbe.smokeTest()
         if (smoke != null) {
           AppLog.log("boot", "container init FAILED: " + smoke)
@@ -397,7 +436,12 @@ class MainActivity : ComponentActivity() {
         if (proc == null) {
           AppLog.log("boot", "engine process: null")
         } else if (!proc.isAlive) {
-          val code = try { proc.exitValue() } catch (_: Exception) { -1 }
+          val code =
+            try {
+              proc.exitValue()
+            } catch (_: Exception) {
+              -1
+            }
           AppLog.log("boot", "engine process DEAD exitValue=" + code)
         } else {
           AppLog.log("boot", "engine process alive but web service down")
@@ -449,19 +493,26 @@ class MainActivity : ComponentActivity() {
   /** Keep-alive settings panel (battery-optimization exemption + Shizuku
    *  appops boost + OEM autostart hint). */
   private fun showKeepAlivePanel() {
-    val batteryLine = getString(
-      if (ShizukuSupport.isBatteryOptimizationIgnored(this)) R.string.keep_alive_battery_ignored
-      else R.string.keep_alive_battery_not_ignored,
-    )
+    val batteryLine =
+      getString(
+        if (ShizukuSupport.isBatteryOptimizationIgnored(this)) {
+          R.string.keep_alive_battery_ignored
+        } else {
+          R.string.keep_alive_battery_not_ignored
+        },
+      )
     val shizukuLine = ShizukuSupport.status(this)
     val status = batteryLine + "\n" + shizukuLine + "\n" + getString(R.string.keep_alive_autostart_hint)
     wizard.showKeepAlivePanel(
       status,
       onBattery = {
         if (ShizukuSupport.isBatteryOptimizationIgnored(this)) {
-          wizard.updateKeepAliveStatus(status.replaceFirst(
-            getString(R.string.keep_alive_battery_not_ignored), getString(R.string.keep_alive_battery_ignored),
-          ))
+          wizard.updateKeepAliveStatus(
+            status.replaceFirst(
+              getString(R.string.keep_alive_battery_not_ignored),
+              getString(R.string.keep_alive_battery_ignored),
+            ),
+          )
           return@showKeepAlivePanel
         }
         try {

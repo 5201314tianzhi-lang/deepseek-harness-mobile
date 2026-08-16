@@ -1,10 +1,10 @@
 package com.dshmobile.shell
 
-import java.io.File
-import java.io.InputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
+import java.io.File
+import java.io.InputStream
 
 /**
  * Shared snapshot extraction: xz tar → dest with owner-only permissions
@@ -19,7 +19,6 @@ import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
  * effort — kernels that do not enforce it accept the no-op).
  */
 object SnapshotExtractor {
-
   /**
    * Extract an xz-compressed tar stream.
    * @param input raw xz stream.
@@ -27,7 +26,12 @@ object SnapshotExtractor {
    * @param dest destination root (filesDir; the archive holds usr/ + home/).
    * @param onProgress bytesDone, bytesTotal.
    */
-  fun extract(input: InputStream, totalBytes: Long, dest: File, onProgress: (Long, Long) -> Unit) {
+  fun extract(
+    input: InputStream,
+    totalBytes: Long,
+    dest: File,
+    onProgress: (Long, Long) -> Unit,
+  ) {
     val xz = XZCompressorInputStream(input)
     val tar = TarArchiveInputStream(xz)
     try {
@@ -53,7 +57,11 @@ object SnapshotExtractor {
    * attribute stamp on executables. Also used by the rootfs downloader.
    * @param onProgress bytesDone.
    */
-  fun extractTar(tar: TarArchiveInputStream, dest: File, onProgress: (Long) -> Unit = {}) {
+  fun extractTar(
+    tar: TarArchiveInputStream,
+    dest: File,
+    onProgress: (Long) -> Unit = {},
+  ) {
     val execFiles = mutableListOf<String>()
     val destCanonical = dest.canonicalPath
     var done = 0L
@@ -65,21 +73,38 @@ object SnapshotExtractor {
       // cannot bypass it: the target is canonical-path validated).
       val target = resolveTarget(dest, destCanonical, entry.name)
       when {
-        entry.isDirectory -> target.mkdirs()
+        entry.isDirectory -> {
+          target.mkdirs()
+        }
+
         entry.isSymbolicLink -> {
           target.parentFile?.mkdirs()
           // isSymbolicLink first: exists() follows the link, and a dangling
           // symlink (from an interrupted earlier run) would report false and
           // leave the stale entry for createSymbolicLink to explode on —
           // every retry then fails identically with no recovery path.
-          if (java.nio.file.Files.isSymbolicLink(target.toPath()) || target.exists()) target.delete()
-          java.nio.file.Files.createSymbolicLink(target.toPath(), java.nio.file.Paths.get(entry.linkName))
+          if (java.nio.file.Files
+              .isSymbolicLink(target.toPath()) || target.exists()
+          ) {
+            target.delete()
+          }
+          java.nio.file.Files
+            .createSymbolicLink(
+              target.toPath(),
+              java.nio.file.Paths
+                .get(entry.linkName),
+            )
         }
+
         entry.isLink -> {
           // Hard links carry no payload (size 0): materialize a full copy of
           // the link target instead of writing an empty file.
           target.parentFile?.mkdirs()
-          if (java.nio.file.Files.isSymbolicLink(target.toPath()) || target.exists()) target.delete()
+          if (java.nio.file.Files
+              .isSymbolicLink(target.toPath()) || target.exists()
+          ) {
+            target.delete()
+          }
           val linkTarget = resolveTarget(dest, destCanonical, entry.linkName)
           if (linkTarget.isFile) {
             linkTarget.copyTo(target, overwrite = true)
@@ -92,6 +117,7 @@ object SnapshotExtractor {
             AppLog.log("extract", "hard link target missing, skipping: " + entry.name)
           }
         }
+
         else -> {
           target.parentFile?.mkdirs()
           // Idempotent overwrite: an existing target may have had its write
@@ -159,7 +185,11 @@ object SnapshotExtractor {
    * traversal (`..`) or absolute path that would escape dest. Throws on
    * violation: an untrusted snapshot must never write outside its root.
    */
-  private fun resolveTarget(dest: File, destCanonical: String, name: String): File {
+  private fun resolveTarget(
+    dest: File,
+    destCanonical: String,
+    name: String,
+  ): File {
     val raw = File(dest, name)
     val canonical = raw.canonicalPath
     if (canonical != destCanonical && !canonical.startsWith(destCanonical + File.separator)) {

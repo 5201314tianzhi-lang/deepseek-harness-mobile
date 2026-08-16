@@ -18,7 +18,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ShizukuSupportTest {
-
   @Test
   fun `isAvailable is false without a Shizuku binder`() {
     assertFalse(ShizukuSupport.isAvailable())
@@ -34,7 +33,9 @@ class ShizukuSupportTest {
   @Test
   fun `applyAppOpsBoost reports absent without throwing`() {
     val context: Context = RuntimeEnvironment.getApplication()
-    val result = java.util.concurrent.atomic.AtomicReference<String>()
+    val result =
+      java.util.concurrent.atomic
+        .AtomicReference<String>()
     val latch = java.util.concurrent.CountDownLatch(1)
     ShizukuSupport.applyAppOpsBoost(context) {
       result.set(it)

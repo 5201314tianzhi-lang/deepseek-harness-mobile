@@ -8,7 +8,6 @@ package com.dshmobile.shell
  * they are platform-fixed and appear once per usage site.
  */
 object DshPaths {
-
   /** Snapshot root under filesDir (usr/). */
   const val USR_DIR = "usr"
 

@@ -16,7 +16,6 @@ class ProotRuntime(
   private val usrDir: File,
   private val workspaceDir: File,
 ) {
-
   val prootDir: File get() = File(context.filesDir, "proot")
   val prootBin: File get() = File(prootDir, "proot")
   val rootfsDir: File get() = File(context.filesDir, DshPaths.ROOTFS_DIR)
@@ -32,13 +31,18 @@ class ProotRuntime(
     return f
   }
 
-  private fun abiAsset(): String? = when {
-    Build.SUPPORTED_ABIS.any { it.startsWith("arm64") } -> "arm64-v8a"
-    Build.SUPPORTED_ABIS.any { it.startsWith("x86_64") } -> "x86_64"
-    else -> null
-  }
+  private fun abiAsset(): String? =
+    when {
+      Build.SUPPORTED_ABIS.any { it.startsWith("arm64") } -> "arm64-v8a"
+      Build.SUPPORTED_ABIS.any { it.startsWith("x86_64") } -> "x86_64"
+      else -> null
+    }
 
-  private fun extractAsset(name: String, target: File, exec: Boolean): Boolean {
+  private fun extractAsset(
+    name: String,
+    target: File,
+    exec: Boolean,
+  ): Boolean {
     // Reuse an already-extracted asset: overwriting one whose write bit was
     // stripped (W^X policy) fails with EACCES on reinstall-without-clear.
     if (target.isFile && target.length() > 0L) return true
@@ -93,8 +97,9 @@ class ProotRuntime(
     // Termux build defaults to /data/data/com.termux/files/usr/tmp, which
     // does not exist here, so glue-rootfs/f2fs-probe creation fails). Older
     // installs are rewritten in place.
-    val wrapperUpToDate = bash.isFile && termux.isFile &&
-      bash.readText(Charsets.US_ASCII).contains("/root/projects")
+    val wrapperUpToDate =
+      bash.isFile && termux.isFile &&
+        bash.readText(Charsets.US_ASCII).contains("/root/projects")
     if (wrapperUpToDate) return true
     if (bash.isFile && !bash.readText(Charsets.US_ASCII).contains("#!")) {
       if (!bash.renameTo(termux)) return false
@@ -104,7 +109,8 @@ class ProotRuntime(
     // scratch space (glue rootfs, f2fs probe, mkdtemp); the container-internal
     // TMPDIR points at /tmp, which lives in the (writable) rootfs.
     val hostTmp = File(context.filesDir, "home/tmp").apply { mkdirs() }.absolutePath
-    val wrapper = """
+    val wrapper =
+      """
       #!$sh
       if [ ! -x ${rootfsDir.absolutePath}/${DshPaths.ROOTFS_BASH} ]; then
         echo "Ubuntu container not installed" >&2
@@ -121,7 +127,7 @@ class ProotRuntime(
         -b ${resolvConf().absolutePath}:/etc/resolv.conf \
         -b ${workspaceDir.absolutePath}:/root/projects \
         -w /root/projects /bin/bash "${'$'}@"
-    """.trimIndent()
+      """.trimIndent()
     bash.writeText(wrapper)
     bash.setExecutable(true, true)
     AppLog.log("proot", "bash wrapper installed -> " + bash.absolutePath)
@@ -146,7 +152,9 @@ class ProotRuntime(
       File(rootfs, DshPaths.CONTAINER_PROJECTS).mkdirs()
       // apt (Ubuntu 24.04 deb822) -> Tsinghua TUNA; Aliyun kept as a comment
       // for manual switching.
-      write(File(rootfs, "etc/apt/sources.list.d/ubuntu.sources"), """
+      write(
+        File(rootfs, "etc/apt/sources.list.d/ubuntu.sources"),
+        """
         |Types: deb
         |URIs: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
         |Suites: noble noble-updates noble-backports noble-security
@@ -159,51 +167,75 @@ class ProotRuntime(
         |# Suites: noble noble-updates noble-backports noble-security
         |# Components: main restricted universe multiverse
         |# Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-        |""".trimMargin()
+        |
+        """.trimMargin(),
       )
-      write(File(rootfs, "etc/pip.conf"), """
+      write(
+        File(rootfs, "etc/pip.conf"),
+        """
         |[global]
         |index-url = https://pypi.tuna.tsinghua.edu.cn/simple
         |trusted-host = pypi.tuna.tsinghua.edu.cn
-        |""".trimMargin()
+        |
+        """.trimMargin(),
       )
-      write(File(rootfs, "etc/npmrc"), """
+      write(
+        File(rootfs, "etc/npmrc"),
+        """
         |registry=https://registry.npmmirror.com
-        |""".trimMargin()
+        |
+        """.trimMargin(),
       )
-      write(File(rootfs, "root/.cargo/config.toml"), """
+      write(
+        File(rootfs, "root/.cargo/config.toml"),
+        """
         |[source.crates-io]
         |replace-with = 'tuna'
         |
         |[source.tuna]
         |registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
-        |""".trimMargin()
+        |
+        """.trimMargin(),
       )
-      write(File(rootfs, "etc/profile.d/dsh-mirrors.sh"), """
+      write(
+        File(rootfs, "etc/profile.d/dsh-mirrors.sh"),
+        """
         |export GOPROXY=https://goproxy.cn,direct
         |export GO111MODULE=on
-        |""".trimMargin()
+        |
+        """.trimMargin(),
       )
-      write(File(rootfs, "root/.bashrc"), """
+      write(
+        File(rootfs, "root/.bashrc"),
+        """
         |export GOPROXY=https://goproxy.cn,direct
         |export GO111MODULE=on
-        |""".trimMargin()
+        |
+        """.trimMargin(),
       )
-      write(File(rootfs, "root/.gemrc"), """
+      write(
+        File(rootfs, "root/.gemrc"),
+        """
         |---
         |:sources:
         |- https://mirrors.tuna.tsinghua.edu.cn/rubygems/
-        |""".trimMargin()
+        |
+        """.trimMargin(),
       )
-      write(File(rootfs, "root/.config/composer/config.json"), """
+      write(
+        File(rootfs, "root/.config/composer/config.json"),
+        """
         |{
         |  "repositories": [
         |    { "type": "composer", "url": "https://mirrors.aliyun.com/composer/" }
         |  ]
         |}
-        |""".trimMargin()
+        |
+        """.trimMargin(),
       )
-      write(File(rootfs, "root/.condarc"), """
+      write(
+        File(rootfs, "root/.condarc"),
+        """
         |channels:
         |  - defaults
         |show_channel_urls: true
@@ -212,7 +244,8 @@ class ProotRuntime(
         |  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
         |custom_channels:
         |  conda-forge: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud
-        |""".trimMargin()
+        |
+        """.trimMargin(),
       )
       marker.writeText("1")
       AppLog.log("proot", "mirror configs + /root/projects applied to rootfs")
@@ -221,7 +254,10 @@ class ProotRuntime(
     }
   }
 
-  private fun write(file: File, content: String) {
+  private fun write(
+    file: File,
+    content: String,
+  ) {
     file.parentFile?.mkdirs()
     file.writeText(content)
   }

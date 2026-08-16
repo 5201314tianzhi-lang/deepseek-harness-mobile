@@ -1,7 +1,7 @@
 package com.dshmobile.shell
 
-import java.io.File
 import org.json.JSONObject
+import java.io.File
 
 /**
  * Container smoke test: runs a real command inside the proot container
@@ -19,25 +19,27 @@ class ContainerProbe(
   private val execHookPath: String?,
   private val opensslConfEnv: Map<String, String>,
 ) {
-
   /** Returns null on success, or the combined output tail on failure. */
-  fun smokeTest(): String? {
-    return try {
+  fun smokeTest(): String? =
+    try {
       val bash = File(usrDir, DshPaths.BASH_BIN).absolutePath
-      val script = "var cp=require('child_process');" +
-        "try{var r=cp.execFileSync(" + JSONObject.quote(bash) + ",['-c','echo CONTAINER_OK; id']," +
-        "{timeout:30000,encoding:'utf8'});process.stdout.write(r)}catch(e){console.log('CONTAINER_FAIL: '+e.message)}"
-      val env = mapOf(
-        "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
-        "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
-        "HOME" to homeDir.absolutePath,
-        "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
-      ) + opensslConfEnv
-      val pb = ProcessBuilder("/system/bin/linker64", nodeBin.absolutePath, "-e", script).also { b ->
-        b.environment().putAll(env)
-        if (execHookPath != null) b.environment()["LD_PRELOAD"] = execHookPath
-        b.redirectErrorStream(true)
-      }
+      val script =
+        "var cp=require('child_process');" +
+          "try{var r=cp.execFileSync(" + JSONObject.quote(bash) + ",['-c','echo CONTAINER_OK; id']," +
+          "{timeout:30000,encoding:'utf8'});process.stdout.write(r)}catch(e){console.log('CONTAINER_FAIL: '+e.message)}"
+      val env =
+        mapOf(
+          "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
+          "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
+          "HOME" to homeDir.absolutePath,
+          "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
+        ) + opensslConfEnv
+      val pb =
+        ProcessBuilder("/system/bin/linker64", nodeBin.absolutePath, "-e", script).also { b ->
+          b.environment().putAll(env)
+          if (execHookPath != null) b.environment()["LD_PRELOAD"] = execHookPath
+          b.redirectErrorStream(true)
+        }
       val proc = pb.start()
       // Bounded wait: a hung container chain must not freeze the boot flow
       // forever (node-side timeout only covers execFileSync itself).
@@ -50,5 +52,4 @@ class ContainerProbe(
     } catch (t: Throwable) {
       (t.message ?: t.javaClass.simpleName).take(600)
     }
-  }
 }

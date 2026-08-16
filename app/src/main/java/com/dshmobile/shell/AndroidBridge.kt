@@ -18,7 +18,6 @@ class AndroidBridge(
   private val onAllFilesAccessRequest: () -> Unit = {},
   private val pickToken: String? = null,
 ) {
-
   @JavascriptInterface
   fun version(): String = "1.0"
 
@@ -31,7 +30,10 @@ class AndroidBridge(
   }
 
   @JavascriptInterface
-  fun showNotification(title: String, text: String) {
+  fun showNotification(
+    title: String,
+    text: String,
+  ) {
     onNotify(title, text)
   }
 
@@ -69,8 +71,8 @@ class AndroidBridge(
      * @param uri the tree URI from the system picker.
      * @returns the mapped real path or the original URI string.
      */
-    fun resolvePickedPath(uri: Uri): String {
-      return try {
+    fun resolvePickedPath(uri: Uri): String =
+      try {
         val docId = DocumentsContract.getTreeDocumentId(uri)
         val idx = docId.indexOf(':')
         val volume = if (idx > 0) docId.substring(0, idx) else ""
@@ -78,7 +80,10 @@ class AndroidBridge(
         if (volume == "primary" && rel.isNotEmpty()) {
           // Derived at runtime (no hardcoded /storage/emulated/0): the mount
           // path can differ per device/multi-user setup.
-          val root = android.os.Environment.getExternalStorageDirectory().absolutePath
+          val root =
+            android.os.Environment
+              .getExternalStorageDirectory()
+              .absolutePath
           "$root/$rel"
         } else {
           uri.toString()
@@ -86,7 +91,6 @@ class AndroidBridge(
       } catch (_: Exception) {
         uri.toString()
       }
-    }
   }
 }
 

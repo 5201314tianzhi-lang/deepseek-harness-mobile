@@ -17,7 +17,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class KeepAliveAlarmTest {
-
   @Test
   fun `schedule arms a single 30-minute allow-while-idle alarm`() {
     val context: Context = RuntimeEnvironment.getApplication()

@@ -1,11 +1,11 @@
 package com.dshmobile.shell
 
 import android.content.Context
+import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
-import org.json.JSONObject
 
 /**
  * Runtime snapshot online update (M2): fetch a manifest {url, sha256, size},
@@ -14,8 +14,9 @@ import org.json.JSONObject
  * new usr) with rollback on failure. The engine restart is handled by the
  * EngineService watchdog on the next poll.
  */
-class UpdateManager(private val context: Context) {
-
+class UpdateManager(
+  private val context: Context,
+) {
   /**
    * Manifest URL override for testing (the emulator reaches the host via
    * 10.0.2.2). Production builds point at a real release server.
@@ -43,7 +44,10 @@ class UpdateManager(private val context: Context) {
       return
     }
     Thread {
-      val uuid = java.util.UUID.randomUUID().toString()
+      val uuid =
+        java.util.UUID
+          .randomUUID()
+          .toString()
       val tmp = File(context.filesDir, "update-" + uuid + ".tar.xz")
       val stage = File(context.filesDir, "update-stage-" + uuid)
       try {
@@ -70,7 +74,10 @@ class UpdateManager(private val context: Context) {
         onStatus(context.getString(R.string.update_extracting))
         // The archive holds a usr/ prefix; stage it OUTSIDE the live tree.
         SnapshotExtractor.extract(
-          tmp.inputStream(), manifest.optLong("size", 0), stage, { _, _ -> },
+          tmp.inputStream(),
+          manifest.optLong("size", 0),
+          stage,
+          { _, _ -> },
         )
         val newUsr = File(stage, "usr")
         if (!File(newUsr, "bin/node").exists()) throw IllegalStateException(context.getString(R.string.err_new_snapshot_no_node))
@@ -99,20 +106,21 @@ class UpdateManager(private val context: Context) {
         // the OLD tree's inodes after the swap, so a missed kill means the
         // running engine silently stays on the previous snapshot — surface
         // it instead of swallowing it.
-        val killed = try {
-          val p = Runtime.getRuntime().exec(arrayOf("/system/bin/pkill", "-f", "bin.js"))
-          val rc = p.waitFor()
-          if (rc == 0) {
-            AppLog.log("update", "old engine killed")
-            true
-          } else {
-            AppLog.log("update", "pkill exit=" + rc + " (no engine matched, nothing to kill)")
-            true
+        val killed =
+          try {
+            val p = Runtime.getRuntime().exec(arrayOf("/system/bin/pkill", "-f", "bin.js"))
+            val rc = p.waitFor()
+            if (rc == 0) {
+              AppLog.log("update", "old engine killed")
+              true
+            } else {
+              AppLog.log("update", "pkill exit=" + rc + " (no engine matched, nothing to kill)")
+              true
+            }
+          } catch (t: Throwable) {
+            AppLog.log("update", "pkill unavailable", t)
+            false
           }
-        } catch (t: Throwable) {
-          AppLog.log("update", "pkill unavailable", t)
-          false
-        }
         onStatus(
           context.getString(R.string.update_done) +
             if (killed) "" else " " + context.getString(R.string.update_restart_hint),
@@ -150,7 +158,10 @@ class UpdateManager(private val context: Context) {
     }
   }
 
-  private fun download(url: String, dest: File) {
+  private fun download(
+    url: String,
+    dest: File,
+  ) {
     val conn = URL(url).openConnection() as HttpURLConnection
     try {
       conn.connectTimeout = 10_000
@@ -204,6 +215,8 @@ class UpdateManager(private val context: Context) {
     const val MAX_SNAPSHOT_BYTES = 500L * 1024 * 1024
 
     /** Process-level single-flight guard (both update entry points share it). */
-    private val UPDATE_IN_FLIGHT = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val UPDATE_IN_FLIGHT =
+      java.util.concurrent.atomic
+        .AtomicBoolean(false)
   }
 }

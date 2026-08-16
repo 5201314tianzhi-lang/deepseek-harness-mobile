@@ -12,8 +12,10 @@ import android.content.Intent
  * background-start restriction.
  */
 class BootReceiver : BroadcastReceiver() {
-
-  override fun onReceive(context: Context, intent: Intent?) {
+  override fun onReceive(
+    context: Context,
+    intent: Intent?,
+  ) {
     val action = intent?.action ?: return
     AppLog.log("keepalive", "event: " + action)
     KeepAliveAlarm.schedule(context)

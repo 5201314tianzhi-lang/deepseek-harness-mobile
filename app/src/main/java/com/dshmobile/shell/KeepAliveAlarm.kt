@@ -15,7 +15,6 @@ import android.os.SystemClock
  * policies). setAndAllowWhileIdle needs no exact-alarm permission.
  */
 object KeepAliveAlarm {
-
   /** Heartbeat interval: 30 minutes — frequent enough to recover from OEM
    *  kills, sparse enough to be battery-neutral. */
   const val INTERVAL_MS = 30 * 60 * 1000L
@@ -23,10 +22,13 @@ object KeepAliveAlarm {
   fun schedule(context: Context) {
     try {
       val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-      val pi = PendingIntent.getBroadcast(
-        context, 0, Intent(context, KeepAliveAlarmReceiver::class.java),
-        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-      )
+      val pi =
+        PendingIntent.getBroadcast(
+          context,
+          0,
+          Intent(context, KeepAliveAlarmReceiver::class.java),
+          PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
       am.setAndAllowWhileIdle(
         AlarmManager.ELAPSED_REALTIME_WAKEUP,
         SystemClock.elapsedRealtime() + INTERVAL_MS,
@@ -39,8 +41,10 @@ object KeepAliveAlarm {
 }
 
 class KeepAliveAlarmReceiver : BroadcastReceiver() {
-
-  override fun onReceive(context: Context, intent: Intent?) {
+  override fun onReceive(
+    context: Context,
+    intent: Intent?,
+  ) {
     // Re-arm first: an exception in the engine check must not stop the chain.
     KeepAliveAlarm.schedule(context)
     // Engine check is HTTP I/O — off the main thread (NetworkOnMainThread).

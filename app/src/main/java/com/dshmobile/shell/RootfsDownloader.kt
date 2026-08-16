@@ -1,11 +1,11 @@
 package com.dshmobile.shell
 
 import android.content.Context
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 
 /**
  * Downloads the official Ubuntu base tarball (cdimage.ubuntu.com), verifies it
@@ -13,14 +13,15 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
  * Single-flight: only one install at a time. Progress goes to AppLog.
  */
 object RootfsDownloader {
-
   private const val BASE_URL =
     "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/"
   private const val TARBALL_PREFIX = "ubuntu-base-24.04.3-base-"
   private const val CHECKSUM_URL = BASE_URL + "SHA256SUMS"
 
   /** Atomic single-flight guard: check-then-set on a volatile bool races. */
-  private val RUNNING = java.util.concurrent.atomic.AtomicBoolean(false)
+  private val RUNNING =
+    java.util.concurrent.atomic
+      .AtomicBoolean(false)
 
   fun isInstalling(): Boolean = RUNNING.get()
 
@@ -100,12 +101,16 @@ object RootfsDownloader {
     }
   }
 
-  private fun expectedChecksum(context: Context, tarballName: String): String? {
-    return try {
+  private fun expectedChecksum(
+    context: Context,
+    tarballName: String,
+  ): String? =
+    try {
       val conn = URL(CHECKSUM_URL).openConnection() as HttpURLConnection
       conn.connectTimeout = 30_000
       conn.inputStream.bufferedReader().useLines { lines ->
-        lines.map { it.trim() }
+        lines
+          .map { it.trim() }
           .firstOrNull { it.endsWith("  $tarballName") || it.endsWith(" *$tarballName") }
           ?.substringBefore(' ')
       }
@@ -113,9 +118,11 @@ object RootfsDownloader {
       AppLog.log("rootfs", "checksum fetch failed", t)
       null
     }
-  }
 
-  private fun extractTarGz(tarGz: File, dest: File) {
+  private fun extractTarGz(
+    tarGz: File,
+    dest: File,
+  ) {
     // Pure-Java extraction (no child process): app-data ELF exec is denied on
     // Android 10+ vendors (EACCES), and this path has no exec-hook protection.
     GzipCompressorInputStream(tarGz.inputStream().buffered()).use { gz ->

@@ -1,12 +1,11 @@
 package com.dshmobile.shell
 
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import org.json.JSONObject
 
 /** Probes the local dsh web engine (127.0.0.1:3080) from the shell side. */
 object EngineProbe {
-
   const val ENGINE_URL = "http://127.0.0.1:3080"
 
   /**

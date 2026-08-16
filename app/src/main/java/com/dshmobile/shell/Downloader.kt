@@ -7,7 +7,6 @@ import java.security.MessageDigest
 
 /** Shared network plumbing: streamed downloads and SHA-256 verification. */
 object Downloader {
-
   /** Stream a GET to a file (256KB buffer); throws IOException on HTTP failure. */
   fun downloadToFile(
     url: String,

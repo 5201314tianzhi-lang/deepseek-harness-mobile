@@ -55,35 +55,40 @@ class DownloaderTest {
 
   /** Minimal single-shot HTTP server (the JDK httpserver module is not on the
    *  Android test bootclasspath). Serves one request then closes. */
-  private fun withServer(statusCode: Int, body: ByteArray, block: (port: Int) -> Unit) {
+  private fun withServer(
+    statusCode: Int,
+    body: ByteArray,
+    block: (port: Int) -> Unit,
+  ) {
     val server = java.net.ServerSocket(0)
     server.reuseAddress = true
-    val thread = Thread {
-      try {
-        server.accept().use { socket ->
-          socket.soTimeout = 5000
-          val input = socket.getInputStream()
-          val buf = ByteArray(4096)
-          var seen = ""
-          while (!seen.contains("\r\n\r\n")) {
-            val n = input.read(buf)
-            if (n < 0) break
-            seen += String(buf, 0, n)
-          }
-          val out = socket.getOutputStream()
-          val head = "HTTP/1.1 $statusCode T\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
-          out.write(head.toByteArray())
-          out.write(body)
-          out.flush()
-        }
-      } catch (_: Exception) {
-      } finally {
+    val thread =
+      Thread {
         try {
-          server.close()
+          server.accept().use { socket ->
+            socket.soTimeout = 5000
+            val input = socket.getInputStream()
+            val buf = ByteArray(4096)
+            var seen = ""
+            while (!seen.contains("\r\n\r\n")) {
+              val n = input.read(buf)
+              if (n < 0) break
+              seen += String(buf, 0, n)
+            }
+            val out = socket.getOutputStream()
+            val head = "HTTP/1.1 $statusCode T\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
+            out.write(head.toByteArray())
+            out.write(body)
+            out.flush()
+          }
         } catch (_: Exception) {
+        } finally {
+          try {
+            server.close()
+          } catch (_: Exception) {
+          }
         }
       }
-    }
     thread.isDaemon = true
     thread.start()
     try {

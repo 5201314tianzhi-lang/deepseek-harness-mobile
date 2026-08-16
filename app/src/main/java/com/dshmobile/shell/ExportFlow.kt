@@ -24,12 +24,14 @@ class ExportFlow(
   private val notify: (title: String, text: String) -> Unit,
   private val pushResult: (ok: Boolean, detail: String) -> Unit,
 ) {
-
   /** In-flight download guard: dedupes the shouldOverrideUrlLoading and
    *  downloadListener entry points. */
   private val exportDownloading = AtomicBoolean(false)
 
-  fun downloadToDownloads(url: String, contentDisposition: String?) {
+  fun downloadToDownloads(
+    url: String,
+    contentDisposition: String?,
+  ) {
     if (!EngineSource.isEngineSource(url)) {
       val reason = context.getString(R.string.notif_engine_only_export)
       notify(context.getString(R.string.notif_download_rejected), reason)
@@ -83,15 +85,20 @@ class ExportFlow(
 
   /** Write to MediaStore.Downloads (permission-free on Android 10+), streaming
    *  with a 200MB cap. */
-  private fun saveToDownloadsStreamed(filename: String, input: java.io.InputStream): String {
-    val values = ContentValues().apply {
-      put(MediaStore.Downloads.DISPLAY_NAME, filename)
-      put(MediaStore.Downloads.MIME_TYPE, "application/zip")
-      put(MediaStore.Downloads.IS_PENDING, 1)
-      put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-    }
-    val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-      ?: throw java.io.IOException(context.getString(R.string.err_create_download))
+  private fun saveToDownloadsStreamed(
+    filename: String,
+    input: java.io.InputStream,
+  ): String {
+    val values =
+      ContentValues().apply {
+        put(MediaStore.Downloads.DISPLAY_NAME, filename)
+        put(MediaStore.Downloads.MIME_TYPE, "application/zip")
+        put(MediaStore.Downloads.IS_PENDING, 1)
+        put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+      }
+    val uri =
+      context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        ?: throw java.io.IOException(context.getString(R.string.err_create_download))
     try {
       context.contentResolver.openOutputStream(uri)?.use { out ->
         val buf = ByteArray(64 * 1024)
@@ -122,16 +129,26 @@ class ExportFlow(
 
   /** Filename: Content-Disposition wins, then the sessionId from the URL, then
    *  a fixed fallback name. */
-  private fun parseDownloadFilename(url: String, contentDisposition: String?): String {
+  private fun parseDownloadFilename(
+    url: String,
+    contentDisposition: String?,
+  ): String {
     contentDisposition?.let { cd ->
-      Regex("filename=\"?([^\";]+)\"?").find(cd)?.groupValues?.get(1)?.let { return it }
+      Regex("filename=\"?([^\";]+)\"?")
+        .find(cd)
+        ?.groupValues
+        ?.get(1)
+        ?.let { return it }
     }
     return try {
       val q = URL(url).query ?: ""
-      val sid = q.split("&").mapNotNull { seg ->
-        val kv = seg.split("=", limit = 2)
-        if (kv.size == 2 && kv[0] == "sessionId") kv[1] else null
-      }.firstOrNull()
+      val sid =
+        q
+          .split("&")
+          .mapNotNull { seg ->
+            val kv = seg.split("=", limit = 2)
+            if (kv.size == 2 && kv[0] == "sessionId") kv[1] else null
+          }.firstOrNull()
       if (sid != null) "dsh-session-$sid.zip" else "dsh-session-export.zip"
     } catch (_: Exception) {
       "dsh-session-export.zip"

@@ -15,7 +15,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class AndroidBridgeTest {
-
   @Test
   fun `primary volume maps to external storage root`() {
     val uri = Uri.parse("content://com.android.externalstorage.documents/tree/primary%3AProjects")

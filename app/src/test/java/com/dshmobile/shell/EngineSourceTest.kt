@@ -16,7 +16,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class EngineSourceTest {
-
   @Test
   fun `exact engine URL is source`() {
     assertTrue(EngineSource.isEngineSource("http://127.0.0.1:3080/"))

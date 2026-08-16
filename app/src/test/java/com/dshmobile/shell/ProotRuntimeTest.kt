@@ -1,7 +1,6 @@
 package com.dshmobile.shell
 
 import android.content.Context
-import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -13,6 +12,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.io.File
 
 /**
  * Container provisioning: bash wrapper generation (proot routing, env
@@ -23,7 +23,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ProotRuntimeTest {
-
   @get:Rule
   val tmp = TemporaryFolder()
 
@@ -44,8 +43,7 @@ class ProotRuntimeTest {
     }
   }
 
-  private fun wrapperText(): String =
-    File(context.filesDir, DshPaths.USR_DIR + "/" + DshPaths.BASH_BIN).readText(Charsets.US_ASCII)
+  private fun wrapperText(): String = File(context.filesDir, DshPaths.USR_DIR + "/" + DshPaths.BASH_BIN).readText(Charsets.US_ASCII)
 
   @Before
   fun setUp() {
@@ -57,11 +55,12 @@ class ProotRuntimeTest {
     File(context.filesDir, DshPaths.USR_DIR + "/bin").mkdirs()
     File(context.filesDir, "usr/bin/bash").writeText("original-bash")
     File(context.filesDir, "usr/bin/sh").writeText("sh")
-    runtime = ProotRuntime(
-      context,
-      File(context.filesDir, DshPaths.USR_DIR),
-      File(context.filesDir, "dshdata-projects"),
-    )
+    runtime =
+      ProotRuntime(
+        context,
+        File(context.filesDir, DshPaths.USR_DIR),
+        File(context.filesDir, "dshdata-projects"),
+      )
   }
 
   @Test

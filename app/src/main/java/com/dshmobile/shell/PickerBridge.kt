@@ -20,7 +20,6 @@ class PickerBridge(
   private val onPermissionRequired: () -> Unit,
   private val notify: (title: String, text: String) -> Unit,
 ) {
-
   private var pendingPickCallback: String? = null
   private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
@@ -121,7 +120,8 @@ class PickerBridge(
     if (android.os.Build.VERSION.SDK_INT < 30) return
     try {
       activity.startActivity(
-        android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+        android.content
+          .Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
           .setData(Uri.parse("package:" + activity.packageName)),
       )
     } catch (_: Exception) {

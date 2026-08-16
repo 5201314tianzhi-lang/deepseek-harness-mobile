@@ -21,14 +21,19 @@ import android.os.Parcel
  * carries a human-readable result.
  */
 class KeepAliveUserService : Binder() {
-
-  override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+  override fun onTransact(
+    code: Int,
+    data: Parcel,
+    reply: Parcel?,
+    flags: Int,
+  ): Boolean {
     when (code) {
       USER_SERVICE_DESTROY -> {
         // Reserved destroy transaction: the server asks us to exit.
         android.os.Process.killProcess(android.os.Process.myPid())
         return true
       }
+
       CMD_APPLY_APPOPS -> {
         val pkg = data.readString() ?: return false
         val result = applyAppOps(pkg)
@@ -47,14 +52,18 @@ class KeepAliveUserService : Binder() {
     val results = StringBuilder()
     for (op in arrayOf("RUN_IN_BACKGROUND", "RUN_ANY_IN_BACKGROUND")) {
       val out = runShell("cmd", "appops", "set", pkg, op, "allow")
-      results.append(op).append(": ").append(out).append("\n")
+      results
+        .append(op)
+        .append(": ")
+        .append(out)
+        .append("\n")
     }
     AppLog.log("keepalive", "appops applied for " + pkg + ":\n" + results)
     return results.toString().trim()
   }
 
-  private fun runShell(vararg args: String): String {
-    return try {
+  private fun runShell(vararg args: String): String =
+    try {
       val p = Runtime.getRuntime().exec(args)
       val out = p.inputStream.bufferedReader().readText()
       val err = p.errorStream.bufferedReader().readText()
@@ -63,7 +72,6 @@ class KeepAliveUserService : Binder() {
     } catch (t: Throwable) {
       t.message ?: t.javaClass.simpleName
     }
-  }
 
   companion object {
     /** Binder transaction code: apply the keep-alive appops exemptions. */

@@ -1,8 +1,8 @@
 package com.dshmobile.shell
 
 import android.content.Context
-import java.io.File
 import org.json.JSONObject
+import java.io.File
 
 /**
  * Node runtime diagnostics for the embedded snapshot: probes whether
@@ -22,7 +22,6 @@ class UnwindResolver(
   private val homeDir: File,
   private val nodeBin: File,
 ) {
-
   /** System library found that makes pty.node loadable (null = none). */
   @Volatile
   private var unwindLib: String? = null
@@ -43,9 +42,12 @@ class UnwindResolver(
         return mapOf("OPENSSL_CONF" to f.absolutePath)
       }
     }
-    AppLog.log("engine", "no openssl.cnf found in snapshot (checked " +
-      listOf("etc/tls/openssl.cnf", "etc/ssl/openssl.cnf").joinToString(", ") +
-      " under " + usrDir.absolutePath + "); leaving OPENSSL_CONF unset")
+    AppLog.log(
+      "engine",
+      "no openssl.cnf found in snapshot (checked " +
+        listOf("etc/tls/openssl.cnf", "etc/ssl/openssl.cnf").joinToString(", ") +
+        " under " + usrDir.absolutePath + "); leaving OPENSSL_CONF unset",
+    )
     return emptyMap()
   }
 
@@ -64,7 +66,6 @@ class UnwindResolver(
     }
   }
 
-  /** Find (and cache) a library that makes pty.node loadable. */
   /** Resolve lazily but guard against concurrent probe rounds: extraction and
    *  engine-start threads can both reach here — without a lock each spawns
    *  duplicate node probe processes (wasted, same result). */
@@ -73,8 +74,11 @@ class UnwindResolver(
     if (unwindLib != null) return unwindLib
     for (candidate in unwindCandidates()) {
       val (code, out) = probePtyNode(pty, candidate)
-      AppLog.log("diag", "node pty probe (preload=" + (candidate ?: "none") + ") exit=" + code +
-        " output: " + out.trim().take(300))
+      AppLog.log(
+        "diag",
+        "node pty probe (preload=" + (candidate ?: "none") + ") exit=" + code +
+          " output: " + out.trim().take(300),
+      )
       if (out.contains("NODE_PTY_OK")) {
         unwindLib = candidate
         if (candidate != null) {
@@ -87,10 +91,11 @@ class UnwindResolver(
   }
 
   private fun ptyNodeFile(): File? {
-    val f = File(
-      usrDir,
-      DshPaths.PTY_NODE,
-    )
+    val f =
+      File(
+        usrDir,
+        DshPaths.PTY_NODE,
+      )
     return if (f.isFile) f else null
   }
 
@@ -104,8 +109,11 @@ class UnwindResolver(
   fun diagnosePtyNode() {
     try {
       val pty = ptyNodeFile()
-      AppLog.log("diag", "pty.node exists=" + (pty != null) + " size=" + (pty?.length() ?: -1) +
-        " canRead=" + (pty?.canRead() ?: false) + " canExec=" + (pty?.canExecute() ?: false))
+      AppLog.log(
+        "diag",
+        "pty.node exists=" + (pty != null) + " size=" + (pty?.length() ?: -1) +
+          " canRead=" + (pty?.canRead() ?: false) + " canExec=" + (pty?.canExecute() ?: false),
+      )
       if (pty != null) {
         try {
           System.load(pty.absolutePath)
@@ -134,8 +142,8 @@ class UnwindResolver(
    * (_Unwind_Resume): the bundled archive-linked libunwind-patch.so first,
    * then system libraries as fallbacks for ROMs that ship one.
    */
-  private fun unwindCandidates(): List<String?> {
-    return listOfNotNull(
+  private fun unwindCandidates(): List<String?> =
+    listOfNotNull(
       bundledUnwindPatch()?.absolutePath,
       null,
       "/system/lib64/libgcc.so",
@@ -143,18 +151,22 @@ class UnwindResolver(
       "/system/lib64/libc++_shared.so",
       "/system/lib64/libunwind.so",
     )
-  }
 
   /** Extract the bundled libunwind-patch.so (per-ABI) from APK assets. */
   private fun bundledUnwindPatch(): File? {
     return try {
       val target = File(context.filesDir, "libunwind-patch.so")
       if (target.isFile && target.length() > 0L) return target
-      val abi = when {
-        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("arm64") } -> "arm64-v8a"
-        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("x86_64") } -> "x86_64"
-        else -> null
-      } ?: return null
+      val abi =
+        when {
+          android.os.Build.SUPPORTED_ABIS
+            .any { it.startsWith("arm64") } -> "arm64-v8a"
+
+          android.os.Build.SUPPORTED_ABIS
+            .any { it.startsWith("x86_64") } -> "x86_64"
+
+          else -> null
+        } ?: return null
       context.assets.open("unwind/libunwind-patch-$abi.so").use { input ->
         target.outputStream().use { out -> input.copyTo(out) }
       }
@@ -168,22 +180,31 @@ class UnwindResolver(
     }
   }
 
-  private fun probePtyNode(pty: File, preload: String?): Pair<Int, String> {
-    val script = "try{require(" + JSONObject.quote(pty.absolutePath) +
-      ");console.log('NODE_PTY_OK')}catch(e){console.log('NODE_PTY_FAIL: '+e.message)}"
-    val env = mapOf(
-      "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
-      "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
-      "HOME" to homeDir.absolutePath,
-      "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
-    ) + opensslConfEnv()
-    val pb = ProcessBuilder(
-      "/system/bin/linker64", nodeBin.absolutePath, "-e", script,
-    ).also { b ->
-      b.environment().putAll(env)
-      if (preload != null) b.environment()["LD_PRELOAD"] = preload
-      b.redirectErrorStream(true)
-    }
+  private fun probePtyNode(
+    pty: File,
+    preload: String?,
+  ): Pair<Int, String> {
+    val script =
+      "try{require(" + JSONObject.quote(pty.absolutePath) +
+        ");console.log('NODE_PTY_OK')}catch(e){console.log('NODE_PTY_FAIL: '+e.message)}"
+    val env =
+      mapOf(
+        "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
+        "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
+        "HOME" to homeDir.absolutePath,
+        "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
+      ) + opensslConfEnv()
+    val pb =
+      ProcessBuilder(
+        "/system/bin/linker64",
+        nodeBin.absolutePath,
+        "-e",
+        script,
+      ).also { b ->
+        b.environment().putAll(env)
+        if (preload != null) b.environment()["LD_PRELOAD"] = preload
+        b.redirectErrorStream(true)
+      }
     val proc = pb.start()
     // Bounded wait: a hung node probe must not block its caller forever (the
     // watchdog thread would be permanently stuck and the engine never
@@ -193,7 +214,12 @@ class UnwindResolver(
       proc.destroyForcibly()
     }
     val out = proc.inputStream.bufferedReader().readText()
-    val code = try { proc.exitValue() } catch (_: Exception) { -1 }
+    val code =
+      try {
+        proc.exitValue()
+      } catch (_: Exception) {
+        -1
+      }
     return code to out
   }
 }

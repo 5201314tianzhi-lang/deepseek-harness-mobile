@@ -21,7 +21,6 @@ import java.util.Locale
  * All entries are English and timestamped; logging never throws.
  */
 object AppLog {
-
   private const val TAG = "dsh-applog"
   private const val MAX_BUFFER_LINES = 500
   private const val MAX_FILE_BYTES = 256 * 1024
@@ -36,7 +35,10 @@ object AppLog {
     context = ctx.applicationContext
   }
 
-  fun log(tag: String, message: String) {
+  fun log(
+    tag: String,
+    message: String,
+  ) {
     val line = timestamp() + " " + tag + ": " + message
     synchronized(lock) {
       lines.add(line)
@@ -46,7 +48,11 @@ object AppLog {
     Log.i(TAG, line)
   }
 
-  fun log(tag: String, message: String, t: Throwable) {
+  fun log(
+    tag: String,
+    message: String,
+    t: Throwable,
+  ) {
     log(tag, message + " — " + t.javaClass.simpleName + ": " + (t.message ?: ""))
     t.stackTrace.take(8).forEach { frame -> log(tag, "  at " + frame) }
   }
@@ -73,7 +79,11 @@ object AppLog {
   }
 
   /** Include the tail of a file (e.g. engine.log) in the diagnostic log. */
-  fun includeFile(file: File, label: String, maxBytes: Int = 16 * 1024) {
+  fun includeFile(
+    file: File,
+    label: String,
+    maxBytes: Int = 16 * 1024,
+  ) {
     try {
       if (!file.exists()) {
         log("file", label + ": <missing>")
@@ -94,8 +104,7 @@ object AppLog {
     }
   }
 
-  private fun timestamp(): String =
-    SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+  private fun timestamp(): String = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
 
   private fun appendToFile(line: String) {
     val ctx = context ?: return
@@ -117,10 +126,11 @@ object AppLog {
   private fun resolveLogFile(ctx: Context): File? {
     return try {
       if (android.os.Build.VERSION.SDK_INT >= 30 && android.os.Environment.isExternalStorageManager()) {
-        val base = File(
-          android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS),
-          "dshdata/logs",
-        )
+        val base =
+          File(
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS),
+            "dshdata/logs",
+          )
         base.mkdirs()
         if (base.isDirectory) return File(base, "dsh.log")
       }

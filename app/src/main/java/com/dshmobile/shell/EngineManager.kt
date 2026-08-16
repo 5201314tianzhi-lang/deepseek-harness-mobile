@@ -10,8 +10,9 @@ import java.io.File
  * filesDir/usr and the dsh engine process lifecycle (PATH/LD_LIBRARY_PATH/HOME
  * injected explicitly — the snapshot is self-sufficient, no Termux app needed).
  */
-class EngineManager(private val context: Context) {
-
+class EngineManager(
+  private val context: Context,
+) {
   val usrDir = File(context.filesDir, DshPaths.USR_DIR)
   val homeDir = File(context.filesDir, "home")
 
@@ -23,8 +24,9 @@ class EngineManager(private val context: Context) {
    */
   val dshDataDir: File
     get() {
-      val publicDocs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-        ?: File(context.filesDir, "dshdata-fallback")
+      val publicDocs =
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+          ?: File(context.filesDir, "dshdata-fallback")
       return File(publicDocs, "dshdata")
     }
   val nodeBin = File(usrDir, DshPaths.NODE_BIN)
@@ -43,8 +45,8 @@ class EngineManager(private val context: Context) {
    * @param onProgress bytesDone, bytesTotal.
    * @returns true on success.
    */
-  fun extractSnapshot(onProgress: (Long, Long) -> Unit): Boolean {
-    return try {
+  fun extractSnapshot(onProgress: (Long, Long) -> Unit): Boolean =
+    try {
       context.assets.openFd("snapshot.tar.xz").use { fd ->
         AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + usrDir.parentFile)
         SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
@@ -59,7 +61,6 @@ class EngineManager(private val context: Context) {
       AppLog.log("extract", "FAILED", t)
       false
     }
-  }
 
   /**
    * Ensure the shared persistent directory is wired up (idempotent; call from
@@ -135,7 +136,8 @@ class EngineManager(private val context: Context) {
                 sf.copyTo(pf, overwrite = true)
                 sf.delete()
                 try {
-                  java.nio.file.Files.createSymbolicLink(sf.toPath(), pf.toPath())
+                  java.nio.file.Files
+                    .createSymbolicLink(sf.toPath(), pf.toPath())
                 } catch (t: Throwable) {
                   // Symlink failed (edge case): keep the private entity, discard the public copy.
                   pf.delete()
@@ -164,10 +166,15 @@ class EngineManager(private val context: Context) {
    * with a symlink; private non-empty directory (may hold new data) →
    * conservatively skipped.
    */
-  private fun relink(src: File, dst: File) {
+  private fun relink(
+    src: File,
+    dst: File,
+  ) {
     if (!dst.exists()) return
     val srcPath = src.toPath()
-    if (java.nio.file.Files.isSymbolicLink(srcPath)) {
+    if (java.nio.file.Files
+        .isSymbolicLink(srcPath)
+    ) {
       if (src.canonicalPath == dst.canonicalPath) return
       src.delete()
     } else if (src.exists()) {
@@ -181,7 +188,8 @@ class EngineManager(private val context: Context) {
     }
     src.parentFile?.mkdirs()
     try {
-      java.nio.file.Files.createSymbolicLink(srcPath, dst.toPath())
+      java.nio.file.Files
+        .createSymbolicLink(srcPath, dst.toPath())
     } catch (t: Throwable) {
       Log.w(TAG, "relink failed for " + src.absolutePath, t)
     }
@@ -189,10 +197,15 @@ class EngineManager(private val context: Context) {
 
   /** Re-link (I-10), file variant: when the public target exists, replace the
    *  private file with a symlink pointing at it. */
-  private fun relinkFile(src: File, dst: File) {
+  private fun relinkFile(
+    src: File,
+    dst: File,
+  ) {
     if (!dst.isFile) return
     val srcPath = src.toPath()
-    if (java.nio.file.Files.isSymbolicLink(srcPath)) {
+    if (java.nio.file.Files
+        .isSymbolicLink(srcPath)
+    ) {
       if (src.canonicalPath == dst.canonicalPath) return
       src.delete()
     } else if (src.exists()) {
@@ -200,14 +213,18 @@ class EngineManager(private val context: Context) {
     }
     src.parentFile?.mkdirs()
     try {
-      java.nio.file.Files.createSymbolicLink(srcPath, dst.toPath())
+      java.nio.file.Files
+        .createSymbolicLink(srcPath, dst.toPath())
     } catch (t: Throwable) {
       Log.w(TAG, "relinkFile failed for " + src.absolutePath, t)
     }
   }
 
   /** Copy a single file when it exists. */
-  private fun copyFileIfExists(src: File, dst: File) {
+  private fun copyFileIfExists(
+    src: File,
+    dst: File,
+  ) {
     if (src.isFile) {
       dst.parentFile?.mkdirs()
       src.copyTo(dst, overwrite = true)
@@ -216,7 +233,10 @@ class EngineManager(private val context: Context) {
 
   /** Move a directory wholesale to public (copy+delete-source when a cross-
    *  mount rename fails), then leave a symlink at the original location. */
-  private fun relocateDir(src: File, dst: File) {
+  private fun relocateDir(
+    src: File,
+    dst: File,
+  ) {
     if (!src.isDirectory || dst.exists()) return
     dst.parentFile?.mkdirs()
     if (!src.renameTo(dst)) {
@@ -224,14 +244,18 @@ class EngineManager(private val context: Context) {
       src.deleteRecursively()
     }
     try {
-      java.nio.file.Files.createSymbolicLink(src.toPath(), dst.toPath())
+      java.nio.file.Files
+        .createSymbolicLink(src.toPath(), dst.toPath())
     } catch (t: Throwable) {
       Log.w(TAG, "symlink failed for dir " + src.absolutePath)
     }
   }
 
   /** Recursively copy a directory tree (real file contents). */
-  private fun copyTree(src: File, dst: File) {
+  private fun copyTree(
+    src: File,
+    dst: File,
+  ) {
     src.listFiles()?.forEach { f ->
       val target = File(dst, f.name)
       if (f.isDirectory) {
@@ -262,10 +286,11 @@ class EngineManager(private val context: Context) {
       AppLog.log("engine", "start refused: no exec hook available")
       return null
     }
-    return snapshotHook.absolutePath to mapOf(
-      "TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE" to "force",
-      "TERMUX_EXEC__EXECVE_CALL__INTERCEPT" to "1",
-    )
+    return snapshotHook.absolutePath to
+      mapOf(
+        "TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE" to "force",
+        "TERMUX_EXEC__EXECVE_CALL__INTERCEPT" to "1",
+      )
   }
 
   /** Path of the active exec hook (for the container smoke test); null = none. */
@@ -282,9 +307,12 @@ class EngineManager(private val context: Context) {
     val termuxExecEnv = hook.second
     // Executability diagnostics: an exec EACCES on the engine binary is the
     // #1 cause of "engine start timeout". Record the actual permission bits.
-    AppLog.log("engine", "node.canExecute=" + nodeBin.canExecute() +
-      " hook.canExecute=" + File(preloadPath).canExecute() +
-      " node.length=" + nodeBin.length() + " usr=" + usrDir.canRead() + "/" + usrDir.canExecute())
+    AppLog.log(
+      "engine",
+      "node.canExecute=" + nodeBin.canExecute() +
+        " hook.canExecute=" + File(preloadPath).canExecute() +
+        " node.length=" + nodeBin.length() + " usr=" + usrDir.canRead() + "/" + usrDir.canExecute(),
+    )
     // Proot container runtime: extract proot + deps and install the bash
     // wrapper routing agent shell commands into the Ubuntu container.
     // Idempotent — cheap when already in place.
@@ -321,59 +349,72 @@ class EngineManager(private val context: Context) {
     }
     EngineManager.engineProcess = null
     return try {
-      val args = arrayOf(
-        nodeBin.absolutePath, "--expose-internals", dshBin.absolutePath, "web", "--port", port.toString(),
-      )
-    // LD_PRELOAD: the exec-reroute hook plus (when found) the system library
-    // that provides _Unwind_Resume for native modules like node-pty. Every
-    // process loaded via linker64 inherits it, so child execs are rerouted
-    // across the whole engine tree. The snapshot's termux-exec variant
-    // additionally needs the TERMUX_EXEC__* env (see termuxExecEnv above).
-    val ptyNode = File(
-      usrDir,
-      DshPaths.PTY_NODE,
-    )
-    val unwind = if (ptyNode.isFile) unwindResolver.resolveIfNeeded(ptyNode) else null
-    val preloadValue = if (unwind != null) preloadPath + ":" + unwind else preloadPath
-    if (unwind != null) {
-      AppLog.log("engine", "LD_PRELOAD += " + unwind)
-    }
-    val env = mapOf(
-        "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
-        "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
-        "HOME" to homeDir.absolutePath,
-        // DSH_HOME stays in the private domain (public FUSE forbids symlinks,
-        // so the profiles/node_modules flat fallback cannot live there); user
-        // data is routed to public Documents/dshdata via migration + symlinks
-        // and plugin configs (see ensureDshDataHome).
-        "DSH_HOME" to ensureDshDataHome().absolutePath,
-        // OPENSSL_CONF: the snapshot's openssl library has the Termux build
-        // path (/data/data/com.termux/files/usr/etc/tls) compiled in, which is
-        // unreadable from this package — node aborts at startup when it cannot
-        // load the config (observed exit code 13). Point it at the config file
-        // shipped inside our own tree when present; otherwise leave it unset
-        // (OpenSSL tolerates a missing default config, not a broken OPENSSL_CONF).
-        // os.tmpdir() falls back to the baked-in Termux tmp on Android
-        // (unwritable from the app domain); keep spill inside filesDir.
-        "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
-        "LD_PRELOAD" to preloadValue,
-        "TERMUX__ROOTFS" to usrDir.parentFile.absolutePath,
-        "TERMUX__PREFIX" to usrDir.absolutePath,
-        "TERMUX_APP__DATA_DIR" to context.filesDir.parentFile.absolutePath,
-        "TERMUX_APP__LEGACY_DATA_DIR" to context.filesDir.parentFile.absolutePath,
-        "TERMUX_VERSION" to "0.118.3",
-        // Auth token for the directory-pick bridge endpoint (validated by the
-        // web-compat plugin as x-dsh-pick-token). Process-level singleton so a
-        // watchdog-restarted engine (separate EngineManager instance) keeps the
-        // same token the WebView bridge holds — otherwise picks break silently.
-        "DSH_PICK_TOKEN" to pickToken,
-      ) + unwindResolver.opensslConfEnv() + termuxExecEnv
+      val args =
+        arrayOf(
+          nodeBin.absolutePath,
+          "--expose-internals",
+          dshBin.absolutePath,
+          "web",
+          "--port",
+          port.toString(),
+        )
+      // LD_PRELOAD: the exec-reroute hook plus (when found) the system library
+      // that provides _Unwind_Resume for native modules like node-pty. Every
+      // process loaded via linker64 inherits it, so child execs are rerouted
+      // across the whole engine tree. The snapshot's termux-exec variant
+      // additionally needs the TERMUX_EXEC__* env (see termuxExecEnv above).
+      val ptyNode =
+        File(
+          usrDir,
+          DshPaths.PTY_NODE,
+        )
+      val unwind = if (ptyNode.isFile) unwindResolver.resolveIfNeeded(ptyNode) else null
+      val preloadValue = if (unwind != null) preloadPath + ":" + unwind else preloadPath
+      if (unwind != null) {
+        AppLog.log("engine", "LD_PRELOAD += " + unwind)
+      }
+      val env =
+        mapOf(
+          "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
+          "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
+          "HOME" to homeDir.absolutePath,
+          // DSH_HOME stays in the private domain (public FUSE forbids symlinks,
+          // so the profiles/node_modules flat fallback cannot live there); user
+          // data is routed to public Documents/dshdata via migration + symlinks
+          // and plugin configs (see ensureDshDataHome).
+          "DSH_HOME" to ensureDshDataHome().absolutePath,
+          // OPENSSL_CONF: the snapshot's openssl library has the Termux build
+          // path (/data/data/com.termux/files/usr/etc/tls) compiled in, which is
+          // unreadable from this package — node aborts at startup when it cannot
+          // load the config (observed exit code 13). Point it at the config file
+          // shipped inside our own tree when present; otherwise leave it unset
+          // (OpenSSL tolerates a missing default config, not a broken OPENSSL_CONF).
+          // os.tmpdir() falls back to the baked-in Termux tmp on Android
+          // (unwritable from the app domain); keep spill inside filesDir.
+          "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
+          "LD_PRELOAD" to preloadValue,
+          "TERMUX__ROOTFS" to usrDir.parentFile.absolutePath,
+          "TERMUX__PREFIX" to usrDir.absolutePath,
+          "TERMUX_APP__DATA_DIR" to context.filesDir.parentFile.absolutePath,
+          "TERMUX_APP__LEGACY_DATA_DIR" to context.filesDir.parentFile.absolutePath,
+          "TERMUX_VERSION" to "0.118.3",
+          // Auth token for the directory-pick bridge endpoint (validated by the
+          // web-compat plugin as x-dsh-pick-token). Process-level singleton so a
+          // watchdog-restarted engine (separate EngineManager instance) keeps the
+          // same token the WebView bridge holds — otherwise picks break silently.
+          "DSH_PICK_TOKEN" to pickToken,
+        ) + unwindResolver.opensslConfEnv() + termuxExecEnv
       engineProcess = startWithArgs(args, env)
       // The cooldown is only set after a real start; a failed path does not
       // consume the window so a retry can happen immediately.
       EngineManager.lastStartAttemptAt = now
-      AppLog.log("engine", "started port=" + port +
-        " node=" + nodeBin.absolutePath + " arch=" + android.os.Build.SUPPORTED_ABIS.joinToString(","))
+      AppLog.log(
+        "engine",
+        "started port=" + port +
+          " node=" + nodeBin.absolutePath + " arch=" +
+          android.os.Build.SUPPORTED_ABIS
+            .joinToString(","),
+      )
       true
     } catch (t: Throwable) {
       Log.e(TAG, "engine start failed", t)
@@ -391,8 +432,12 @@ class EngineManager(private val context: Context) {
    * binaries, but loading them through /system/bin/linker64 is the same
    * mechanism as native libraries (always permitted for app data).
    */
-  private fun startWithArgs(args: Array<String>, env: Map<String, String>): Process {
+  private fun startWithArgs(
+    args: Array<String>,
+    env: Map<String, String>,
+  ): Process {
     val log = File(context.filesDir, "engine.log")
+
     fun build(argv: List<String>): ProcessBuilder =
       ProcessBuilder(argv).also { b ->
         b.environment().putAll(env)
@@ -424,11 +469,16 @@ class EngineManager(private val context: Context) {
     // would fail with EACCES on reinstall-without-data-clear.
     if (target.isFile && target.length() > 0L) return target
     return try {
-      val abi = when {
-        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("arm64") } -> "arm64-v8a"
-        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("x86_64") } -> "x86_64"
-        else -> null
-      } ?: return null
+      val abi =
+        when {
+          android.os.Build.SUPPORTED_ABIS
+            .any { it.startsWith("arm64") } -> "arm64-v8a"
+
+          android.os.Build.SUPPORTED_ABIS
+            .any { it.startsWith("x86_64") } -> "x86_64"
+
+          else -> null
+        } ?: return null
       java.util.zip.ZipFile(context.applicationInfo.sourceDir).use { zip ->
         val entry = zip.getEntry("lib/$abi/libexec-hook.so") ?: return null
         zip.getInputStream(entry).use { input ->
@@ -479,7 +529,10 @@ class EngineManager(private val context: Context) {
      * engine restart never leaves the bridge token mismatched. Random per
      * process start, exactly as before — just shared.
      */
-    val pickToken: String = java.util.UUID.randomUUID().toString()
+    val pickToken: String =
+      java.util.UUID
+        .randomUUID()
+        .toString()
 
     /** Watchdog/retry backoff: no new start within this window of the last
      *  attempt. Cold node boot on the phone takes 20-45s (plugin tree + first
@@ -490,7 +543,9 @@ class EngineManager(private val context: Context) {
 
     /** Process-level start CAS: visible across EngineManager instances
      *  (double-start race protection). */
-    val STARTING = java.util.concurrent.atomic.AtomicBoolean(false)
+    val STARTING =
+      java.util.concurrent.atomic
+        .AtomicBoolean(false)
 
     /** Epoch ms of the last real start; baseline for the watchdog cooldown. */
     @Volatile

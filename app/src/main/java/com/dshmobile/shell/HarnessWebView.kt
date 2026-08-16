@@ -28,11 +28,11 @@ class HarnessWebView(
   private val onKeepScreen: (enable: Boolean) -> Unit,
   private val pickToken: String,
 ) {
-
   private val isDebuggable: Boolean
     get() = (activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
   private val exportLaunching = AtomicBoolean(false)
+
   /** Set when the engine-source page failed to load (error page shown before
    *  the engine answered); cleared on a successful load. Drives the
    *  reload-if-failed policy instead of reloading on every show. */
@@ -58,49 +58,65 @@ class HarnessWebView(
         forceDark = WebSettings.FORCE_DARK_AUTO
       }
     }
-    view.webViewClient = object : WebViewClient() {
-      override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-        super.onPageStarted(view, url, favicon)
-        injectCompatPolyfills(view)
-      }
+    view.webViewClient =
+      object : WebViewClient() {
+        override fun onPageStarted(
+          view: WebView,
+          url: String?,
+          favicon: android.graphics.Bitmap?,
+        ) {
+          super.onPageStarted(view, url, favicon)
+          injectCompatPolyfills(view)
+        }
 
-      override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        val url = request.url.toString()
-        // Session-log export (issue apk#6 + the 403 fix): browser navigations
-        // carry Origin:null / sec-fetch-site markers and are rejected by dsh's
-        // /api browser-trust fence (403, anti DNS-rebinding/cross-site). Route
-        // it through an in-app download instead: HttpURLConnection has no
-        // browser markers → the fence lets it through (verified on MuMu).
-        if (EngineSource.isSessionExport(url, request.method)) {
-          export.downloadToDownloads(url, null)
+        override fun shouldOverrideUrlLoading(
+          view: WebView,
+          request: WebResourceRequest,
+        ): Boolean {
+          val url = request.url.toString()
+          // Session-log export (issue apk#6 + the 403 fix): browser navigations
+          // carry Origin:null / sec-fetch-site markers and are rejected by dsh's
+          // /api browser-trust fence (403, anti DNS-rebinding/cross-site). Route
+          // it through an in-app download instead: HttpURLConnection has no
+          // browser markers → the fence lets it through (verified on MuMu).
+          if (EngineSource.isSessionExport(url, request.method)) {
+            export.downloadToDownloads(url, null)
+            return true
+          }
+          // Keep only engine-same-origin pages inside the WebView (the privileged
+          // bridge and download capability are trusted only for the engine);
+          // external links go to the system browser so untrusted pages can never
+          // reach the bridge (social engineering / notification spam / arbitrary
+          // downloads).
+          if (EngineSource.isEngineSource(url)) {
+            view.loadUrl(url)
+            return true
+          }
+          openInExternalBrowser(request.url)
           return true
         }
-        // Keep only engine-same-origin pages inside the WebView (the privileged
-        // bridge and download capability are trusted only for the engine);
-        // external links go to the system browser so untrusted pages can never
-        // reach the bridge (social engineering / notification spam / arbitrary
-        // downloads).
-        if (EngineSource.isEngineSource(url)) {
-          view.loadUrl(url)
-          return true
-        }
-        openInExternalBrowser(request.url)
-        return true
-      }
 
-      override fun onReceivedError(view: WebView, errorCode: Int, description: String, failingUrl: String) {
-        if (EngineSource.isEngineSource(failingUrl)) {
-          loadFailed.set(true)
-          onEngineError()
+        override fun onReceivedError(
+          view: WebView,
+          errorCode: Int,
+          description: String,
+          failingUrl: String,
+        ) {
+          if (EngineSource.isEngineSource(failingUrl)) {
+            loadFailed.set(true)
+            onEngineError()
+          }
+        }
+
+        override fun onPageFinished(
+          view: WebView,
+          url: String,
+        ) {
+          super.onPageFinished(view, url)
+          if (EngineSource.isEngineSource(url)) loadFailed.set(false)
+          pushSystemDark()
         }
       }
-
-      override fun onPageFinished(view: WebView, url: String) {
-        super.onPageFinished(view, url)
-        if (EngineSource.isEngineSource(url)) loadFailed.set(false)
-        pushSystemDark()
-      }
-    }
     // WebView downloads — session-log export (/api/session.export) and other
     // engine-source downloads — all go through the in-app MediaStore path:
     // browser navigations carry Origin:null and are rejected by dsh's /api
@@ -109,21 +125,29 @@ class HarnessWebView(
     view.setDownloadListener { url, _userAgent, contentDisposition, _mimeType, _contentLength ->
       export.downloadToDownloads(url, contentDisposition)
     }
-    view.webChromeClient = object : WebChromeClient() {
-      override fun onShowFileChooser(
-        webView: WebView, filePathCallback: ValueCallback<Array<Uri>>, fileChooserParams: FileChooserParams,
-      ): Boolean {
-        // File uploads go through the system file picker (OpenDocument,
-        // multi-select); PickerBridge's directory picker handles workspaces
-        // and the two must stay separate.
-        return picker.handleFileChooser(filePathCallback)
-      }
+    view.webChromeClient =
+      object : WebChromeClient() {
+        override fun onShowFileChooser(
+          webView: WebView,
+          filePathCallback: ValueCallback<Array<Uri>>,
+          fileChooserParams: FileChooserParams,
+        ): Boolean {
+          // File uploads go through the system file picker (OpenDocument,
+          // multi-select); PickerBridge's directory picker handles workspaces
+          // and the two must stay separate.
+          return picker.handleFileChooser(filePathCallback)
+        }
 
-      override fun onJsAlert(view: WebView, url: String, message: String, result: JsResult): Boolean {
-        result.confirm()
-        return true
+        override fun onJsAlert(
+          view: WebView,
+          url: String,
+          message: String,
+          result: JsResult,
+        ): Boolean {
+          result.confirm()
+          return true
+        }
       }
-    }
     view.addJavascriptInterface(
       AndroidBridge(
         onPickRequest = { callbackId -> picker.pickDirectoryWithPermissionCheck(callbackId) },
@@ -142,12 +166,16 @@ class HarnessWebView(
    *  plugin consumes this bridge value via a matchMedia hook
    *  (window.__dshThemeBridge.setDark) to drive the upstream system theme. */
   fun pushSystemDark() {
-    val dark = (activity.resources.configuration.uiMode and
-      android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
-      android.content.res.Configuration.UI_MODE_NIGHT_YES
+    val dark =
+      (
+        activity.resources.configuration.uiMode and
+          android.content.res.Configuration.UI_MODE_NIGHT_MASK
+      ) ==
+        android.content.res.Configuration.UI_MODE_NIGHT_YES
     try {
       view.evaluateJavascript(
-        "window.__dshThemeBridge && window.__dshThemeBridge.setDark(" + dark + ")", null,
+        "window.__dshThemeBridge && window.__dshThemeBridge.setDark(" + dark + ")",
+        null,
       )
     } catch (_: Exception) {
       // Page not ready: onPageFinished pushes it again.
@@ -182,8 +210,12 @@ class HarnessWebView(
    */
   private fun injectCompatPolyfills(view: WebView) {
     try {
-      val js = polyfillsJs ?: activity.assets.open("js/compat-polyfills.js").bufferedReader().use { it.readText() }
-        .also { polyfillsJs = it }
+      val js =
+        polyfillsJs ?: activity.assets
+          .open("js/compat-polyfills.js")
+          .bufferedReader()
+          .use { it.readText() }
+          .also { polyfillsJs = it }
       view.evaluateJavascript(js, null)
     } catch (t: Throwable) {
       AppLog.log("web", "polyfill inject failed", t)
