@@ -24,7 +24,7 @@ object KeepAliveAlarm {
     try {
       val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
       val pi = PendingIntent.getBroadcast(
-        context, 0, Intent(context, KeepAliveAlarm::class.java),
+        context, 0, Intent(context, KeepAliveAlarmReceiver::class.java),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
       )
       am.setAndAllowWhileIdle(
@@ -38,7 +38,7 @@ object KeepAliveAlarm {
   }
 }
 
-class KeepAliveAlarm : BroadcastReceiver() {
+class KeepAliveAlarmReceiver : BroadcastReceiver() {
 
   override fun onReceive(context: Context, intent: Intent?) {
     // Re-arm first: an exception in the engine check must not stop the chain.

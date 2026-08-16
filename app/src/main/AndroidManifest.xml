@@ -41,7 +41,7 @@
 
     <!-- Keep-alive (L2): heartbeat recovery alarm (self-re-arming). -->
     <receiver
-      android:name=".KeepAliveAlarm"
+      android:name=".KeepAliveAlarmReceiver"
       android:exported="false" />
 
     <!-- Shizuku keep-alive bridge: must be declared and exported for the

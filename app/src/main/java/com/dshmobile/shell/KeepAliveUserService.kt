@@ -1,6 +1,5 @@
 package com.dshmobile.shell
 
-import android.content.Context
 import android.os.Binder
 import android.os.Parcel
 
@@ -22,11 +21,6 @@ import android.os.Parcel
  * carries a human-readable result.
  */
 class KeepAliveUserService : Binder() {
-
-  /** Server-side (Context) constructor — optional but preferred by the
-   *  Shizuku v13 server; the no-arg constructor covers older servers. */
-  @Suppress("UNUSED_PARAMETER")
-  constructor(context: Context) : this()
 
   override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
     when (code) {
