@@ -56,6 +56,14 @@ object AppLog {
     synchronized(lock) { return lines.joinToString("\n") }
   }
 
+  /** Tail of the current log (newest entries), capped at maxChars. */
+  fun tail(maxChars: Int): String {
+    synchronized(lock) {
+      val text = lines.joinToString("\n")
+      return if (text.length <= maxChars) text else "…\n" + text.takeLast(maxChars)
+    }
+  }
+
   /** Copy the full log to the clipboard; returns the copied text. */
   fun copyToClipboard(activity: android.app.Activity): String {
     val text = dump()

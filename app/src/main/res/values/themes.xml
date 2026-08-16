@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <style name="Theme.Dsh" parent="android:Theme.Material.Light.NoActionBar">
-    <item name="android:windowBackground">#ffffff</item>
-    <item name="android:statusBarColor">#0f1720</item>
+  <style name="Theme.Dsh" parent="android:Theme.Material.NoActionBar">
+    <item name="android:windowBackground">@color/bg_guide</item>
+    <item name="android:statusBarColor">@color/bg_guide</item>
+    <item name="android:navigationBarColor">@color/bg_guide</item>
+    <item name="android:windowLightStatusBar">false</item>
   </style>
 </resources>

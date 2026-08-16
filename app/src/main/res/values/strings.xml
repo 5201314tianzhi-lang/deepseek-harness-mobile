@@ -3,11 +3,12 @@
   <string name="app_name">深度编码</string>
 
   <!-- Guide view -->
-  <string name="button_open_termux">Open Termux</string>
+  <string name="guide_brand_subtitle">Local AI coding environment</string>
   <string name="button_retry">Retry</string>
   <string name="button_check_update">Check for runtime updates</string>
   <string name="button_copy_log">Copy diagnostic log</string>
   <string name="button_install_container">Install Ubuntu container</string>
+  <string name="button_back_to_harness">Back to Harness</string>
   <string name="container_install_done">Ubuntu container ready</string>
   <string name="container_install_failed">Ubuntu container install failed</string>
   <string name="notif_log_copied">Diagnostic log copied</string>
@@ -28,11 +29,14 @@
   <string name="export_failed">Export failed</string>
 
   <!-- Engine flow status -->
-  <string name="status_first_extract">First launch: extracting runtime (~70 MB)…</string>
+  <string name="status_first_extract">Preparing your workspace…</string>
   <string name="status_extracting">Extracting runtime… %1$d MB</string>
   <string name="status_extract_failed">Runtime extraction failed. Please retry.</string>
   <string name="status_engine_start_failed">Engine start failed. Please retry.</string>
   <string name="status_engine_timeout">Engine start timed out. Please retry.</string>
+  <string name="status_engine_starting">Starting engine…</string>
+  <string name="status_engine_starting_detail">Cold start can take up to a minute. Tap for details.</string>
+  <string name="status_engine_error_detail">Tap for details.</string>
 
   <!-- Download errors -->
   <string name="err_create_download">Could not create the download file</string>

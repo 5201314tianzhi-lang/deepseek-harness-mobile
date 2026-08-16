@@ -14,6 +14,7 @@ import android.os.Environment
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.util.Log
+import java.io.File
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.JsResult
@@ -38,11 +39,22 @@ class MainActivity : ComponentActivity() {
 
   private lateinit var webView: WebView
   private lateinit var guideView: LinearLayout
+  /** Thin status bar overlaying the Harness during cold start (quick path). */
+  private lateinit var topStatusBar: LinearLayout
+  private lateinit var topStatusLabel: TextView
+  private var topPulseDot: View? = null
+  private var topPulseAnimator: android.animation.ValueAnimator? = null
+  private var guideFromTopBar = false
   /** One-time auth token for the directory-pick bridge (random per process
    *  start; held in the engine env and the JS bridge). */
   private val pickToken: String = java.util.UUID.randomUUID().toString()
-  private lateinit var engineStatus: TextView
-  private lateinit var progressText: TextView
+  private var engineStatus: TextView? = null
+  private var statusDetail: TextView? = null
+  private var progressBar: android.widget.ProgressBar? = null
+  private var retryButton: Button? = null
+  private var backButton: Button? = null
+  private var errorBlock: LinearLayout? = null
+  private var errorText: TextView? = null
   private val engineManager by lazy { EngineManager(this, pickToken) }
   private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
   private var pendingPickCallback: String? = null
@@ -53,6 +65,10 @@ class MainActivity : ComponentActivity() {
   /** Notification queued while the permission dialog is up (I-07: re-send it
    *  after the grant callback, otherwise the first tap only shows the dialog). */
   private var pendingNotification: Pair<String, String>? = null
+
+  /** UI surface driving the engine-flow states: full-screen guide (first
+   *  launch / errors) or the thin cold-start bar over the Harness. */
+  private enum class UiMode { HIDDEN, GUIDE, TOPBAR }
 
   /** AGP 8 does not generate BuildConfig by default; use the debuggable flag. */
   private val isDebuggable: Boolean
@@ -123,13 +139,25 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     AppLog.init(this)
     logDeviceInfo()
-    val root = FrameLayout(this)
+    val root = FrameLayout(this).apply {
+      setBackgroundColor(0xFF0C0F14.toInt())
+    }
     webView = WebView(this).apply { id = View.generateViewId() }
     root.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    topStatusBar = buildTopStatusBar()
+    root.addView(topStatusBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.TOP))
     guideView = buildGuideView()
     root.addView(guideView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     setContentView(root)
     configureWebView()
+    // Quick path: the snapshot is already extracted → go straight to the
+    // Harness; the cold start is covered by the thin status bar, not the
+    // full-screen guide.
+    if (File(filesDir, "usr/bin/node").isFile) {
+      webView.visibility = View.VISIBLE
+    } else {
+      guideView.visibility = View.VISIBLE
+    }
     // Testable update trigger: adb am start -n .../.MainActivity -a com.dshmobile.shell.action.UPDATE
     if (intent?.action == ACTION_UPDATE) {
       // I-03: the activity is exported (LAUNCHER), so any app can fire this
@@ -558,34 +586,195 @@ class MainActivity : ComponentActivity() {
     )
   }
 
+  /** Tactile press feedback: a light scale-down while pressed. */
+  private fun attachPressFeedback(view: View) {
+    view.setOnTouchListener { v, event ->
+      when (event.actionMasked) {
+        android.view.MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(80).start()
+        android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
+          v.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+      }
+      false
+    }
+  }
+
+  /** Pill button with the accent fill (primary action). */
+  private fun accentButton(text: String): Button {
+    return Button(this).apply {
+      this.text = text
+      setTextColor(0xFF0B0E14.toInt())
+      textSize = 14f
+      typeface = android.graphics.Typeface.DEFAULT_BOLD
+      background = getDrawable(com.dshmobile.shell.R.drawable.pill_accent)
+      minHeight = (48 * resources.displayMetrics.density).toInt()
+      isAllCaps = false
+      stateListAnimator = null
+      attachPressFeedback(this)
+    }
+  }
+
+  /** Pill button with a hairline border (secondary action). */
+  private fun ghostButton(text: String): Button {
+    return Button(this).apply {
+      this.text = text
+      setTextColor(resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
+      textSize = 14f
+      background = getDrawable(com.dshmobile.shell.R.drawable.pill_ghost)
+      minHeight = (48 * resources.displayMetrics.density).toInt()
+      isAllCaps = false
+      stateListAnimator = null
+      attachPressFeedback(this)
+    }
+  }
+
+  /** Full-screen guide: brand, status card, action row. Shown on first launch
+   *  (extraction) and when the engine fails while no Harness is reachable. */
   private fun buildGuideView(): LinearLayout {
-    val padding = (24 * resources.displayMetrics.density).toInt()
+    val d = resources.displayMetrics.density
+    val pad = (24 * d).toInt()
     val guide = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(padding, padding, padding, padding)
-      gravity = android.view.Gravity.CENTER
+      setPadding(pad, pad, pad, pad)
+      gravity = android.view.Gravity.CENTER_HORIZONTAL
       visibility = View.GONE
+      setBackgroundColor(resources.getColor(com.dshmobile.shell.R.color.bg_guide, null))
     }
-    engineStatus = TextView(this).apply { textSize = 16f; setPadding(0, 0, 0, padding) }
-    progressText = TextView(this).apply { textSize = 13f; setPadding(0, 0, 0, padding); visibility = View.GONE }
-    val openTermux = Button(this).apply {
-      text = getString(R.string.button_open_termux)
-      setOnClickListener { launchTermux() }
+
+    // Brand block.
+    val logo = android.widget.ImageView(this).apply {
+      setImageResource(com.dshmobile.shell.R.mipmap.ic_launcher)
+      val size = (56 * d).toInt()
+      layoutParams = LinearLayout.LayoutParams(size, size)
     }
-    val retry = Button(this).apply {
-      text = getString(R.string.button_retry)
+    val brandTitle = TextView(this).apply {
+      text = getString(R.string.app_name)
+      setTextColor(resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
+      textSize = 26f
+      typeface = android.graphics.Typeface.DEFAULT_BOLD
+      setPadding(0, (16 * d).toInt(), 0, 0)
+    }
+    val brandSub = TextView(this).apply {
+      text = getString(R.string.guide_brand_subtitle)
+      setTextColor(resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
+      textSize = 13f
+      setPadding(0, (4 * d).toInt(), 0, 0)
+    }
+    val brand = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = android.view.Gravity.CENTER_HORIZONTAL
+      setPadding(0, (72 * d).toInt(), 0, 0)
+    }
+    brand.addView(logo)
+    brand.addView(brandTitle)
+    brand.addView(brandSub)
+
+    // Status card.
+    val statusDot = View(this).apply {
+      background = getDrawable(com.dshmobile.shell.R.drawable.status_dot)
+      val size = (8 * d).toInt()
+      layoutParams = LinearLayout.LayoutParams(size, size)
+    }
+    val statusTitle = TextView(this).apply {
+      setTextColor(resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
+      textSize = 15f
+      typeface = android.graphics.Typeface.DEFAULT_BOLD
+      setPadding((8 * d).toInt(), 0, 0, 0)
+    }
+    engineStatus = statusTitle
+    val statusRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = android.view.Gravity.CENTER_VERTICAL
+    }
+    statusRow.addView(statusDot)
+    statusRow.addView(statusTitle)
+    val detail = TextView(this).apply {
+      setTextColor(resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
+      textSize = 12f
+      typeface = android.graphics.Typeface.MONOSPACE
+      setPadding(0, (10 * d).toInt(), 0, 0)
+      maxLines = 3
+      ellipsize = android.text.TextUtils.TruncateAt.END
+    }
+    statusDetail = detail
+    val progress = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+      isIndeterminate = true
+      progressTintList = android.content.res.ColorStateList.valueOf(0xFF4D6BFE.toInt())
+      progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0xFF22304A.toInt())
+      visibility = View.GONE
+      val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (4 * d).toInt())
+      lp.topMargin = (16 * d).toInt()
+      layoutParams = lp
+    }
+    progressBar = progress
+    val cardBody = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
+    }
+    cardBody.addView(statusRow)
+    cardBody.addView(detail)
+    cardBody.addView(progress)
+    val errorDetail = TextView(this).apply {
+      setTextColor(resources.getColor(com.dshmobile.shell.R.color.error, null))
+      textSize = 12f
+      typeface = android.graphics.Typeface.MONOSPACE
+      setPadding((12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt())
+      maxLines = 4
+      ellipsize = android.text.TextUtils.TruncateAt.END
+    }
+    errorText = errorDetail
+    val errorBlock = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = getDrawable(com.dshmobile.shell.R.drawable.inset_bg)
+      visibility = View.GONE
+      val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+      lp.topMargin = (16 * d).toInt()
+      layoutParams = lp
+    }
+    errorBlock.addView(errorDetail)
+    this.errorBlock = errorBlock
+    val card = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = getDrawable(com.dshmobile.shell.R.drawable.card_bg)
+      layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+      ).apply {
+        topMargin = (40 * d).toInt()
+        leftMargin = (8 * d).toInt()
+        rightMargin = (8 * d).toInt()
+      }
+    }
+    card.addView(cardBody)
+    card.addView(errorBlock)
+
+    // Actions.
+    val retry = accentButton(getString(R.string.button_retry)).apply {
+      visibility = View.GONE
       setOnClickListener { startEngineFlow() }
     }
-    val update = Button(this).apply {
-      text = getString(R.string.button_check_update)
+    retryButton = retry
+    val update = ghostButton(getString(R.string.button_check_update)).apply {
       setOnClickListener {
         UpdateManager(this@MainActivity).checkAndApply { status ->
-          runOnUiThread { engineStatus.text = status }
+          runOnUiThread { showGuideStatus(status, null, true) }
         }
       }
     }
-    val copyLog = Button(this).apply {
-      text = getString(R.string.button_copy_log)
+    val installContainer = ghostButton(getString(R.string.button_install_container)).apply {
+      setOnClickListener {
+        isEnabled = false
+        Thread {
+          val ok = RootfsDownloader.install(this@MainActivity.applicationContext)
+          runOnUiThread {
+            isEnabled = true
+            showGuideStatus(
+              if (ok) getString(R.string.container_install_done)
+              else getString(R.string.container_install_failed), null, false,
+            )
+          }
+        }.start()
+      }
+    }
+    val copyLog = ghostButton(getString(R.string.button_copy_log)).apply {
       setOnClickListener {
         val copied = AppLog.copyToClipboard(this@MainActivity)
         showTestNotification(
@@ -594,36 +783,163 @@ class MainActivity : ComponentActivity() {
         )
       }
     }
-    val installContainer = Button(this).apply {
-      text = getString(R.string.button_install_container)
-      setOnClickListener {
-        isEnabled = false
-        Thread {
-          val ok = RootfsDownloader.install(this@MainActivity.applicationContext)
-          runOnUiThread {
-            isEnabled = true
-            engineStatus.text = if (ok) {
-              getString(R.string.container_install_done)
-            } else {
-              getString(R.string.container_install_failed)
-            }
-          }
-        }.start()
+    val back = ghostButton(getString(R.string.button_back_to_harness)).apply {
+      visibility = View.GONE
+      setOnClickListener { showWeb() }
+    }
+    backButton = back
+    val actions = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        topMargin = (32 * d).toInt()
+        leftMargin = (8 * d).toInt()
+        rightMargin = (8 * d).toInt()
       }
     }
-    guide.addView(engineStatus)
-    guide.addView(progressText)
-    guide.addView(openTermux)
-    guide.addView(retry)
-    guide.addView(update)
-    guide.addView(installContainer)
-    guide.addView(copyLog)
+    actions.addView(retry)
+    actions.addView(update)
+    actions.addView(installContainer)
+    actions.addView(copyLog)
+    actions.addView(back)
+    repeat(actions.childCount - 1) { i ->
+      (actions.getChildAt(i).layoutParams as LinearLayout.LayoutParams).bottomMargin = (10 * d).toInt()
+    }
+
+    val spacer = View(this).apply {
+      layoutParams = LinearLayout.LayoutParams(0, 0).apply { weight = 1f }
+    }
+    guide.addView(brand)
+    guide.addView(spacer)
+    guide.addView(card)
+    guide.addView(actions)
     return guide
   }
 
-  private fun launchTermux() {
-    val intent = packageManager.getLaunchIntentForPackage("com.termux")
-    if (intent != null) startActivity(intent)
+  /** Thin cold-start bar overlaying the Harness: pulse dot + status, taps to
+   *  open the full-screen guide. */
+  private fun buildTopStatusBar(): LinearLayout {
+    val d = resources.displayMetrics.density
+    val dot = View(this).apply {
+      background = getDrawable(com.dshmobile.shell.R.drawable.status_dot)
+      val size = (8 * d).toInt()
+      layoutParams = LinearLayout.LayoutParams(size, size)
+    }
+    topPulseDot = dot
+    val label = TextView(this).apply {
+      setTextColor(resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
+      textSize = 13f
+      typeface = android.graphics.Typeface.DEFAULT_BOLD
+      setPadding((10 * d).toInt(), 0, 0, 0)
+    }
+    topStatusLabel = label
+    val bar = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = android.view.Gravity.CENTER_VERTICAL
+      setPadding((20 * d).toInt(), (10 * d).toInt(), (20 * d).toInt(), (10 * d).toInt())
+      setBackgroundColor(0xE60C0F14.toInt())
+      visibility = View.GONE
+      setOnClickListener { openGuideFromTopBar() }
+    }
+    bar.addView(dot)
+    bar.addView(label)
+    bar.elevation = (6 * d)
+    return bar
+  }
+
+  private fun openGuideFromTopBar() {
+    guideFromTopBar = true
+    retryButton?.visibility = View.VISIBLE
+    backButton?.visibility = View.VISIBLE
+    showGuide()
+  }
+
+  /** Set the guide's status row; shows the spinner when the status is
+   *  indeterminate progress (extraction, engine start). */
+  private fun showGuideStatus(title: String, detail: String?, busy: Boolean) {
+    engineStatus?.text = title
+    statusDetail?.text = detail
+    statusDetail?.visibility = if (detail.isNullOrEmpty()) View.GONE else View.VISIBLE
+    progressBar?.visibility = if (busy) View.VISIBLE else View.GONE
+    if (busy) {
+      errorBlock?.visibility = View.GONE
+      retryButton?.visibility = View.GONE
+    }
+  }
+
+  private fun showGuideError(title: String) {
+    showGuideStatus(title, null, false)
+    retryButton?.visibility = View.VISIBLE
+    // Surface the tail of the diagnostic log as inline error context.
+    val tail = AppLog.tail(1200)
+    errorText?.text = tail
+    errorBlock?.visibility = if (tail.isBlank()) View.GONE else View.VISIBLE
+  }
+
+  /** Cross-fade between the guide surface and the Harness web view. */
+  private fun showGuide() {
+    webView.animate().alpha(0f).setDuration(150).start()
+    webView.visibility = View.GONE
+    stopTopBarPulse()
+    topStatusBar.visibility = View.GONE
+    guideView.visibility = View.VISIBLE
+    guideView.animate().alpha(1f).setDuration(200).start()
+  }
+
+  private fun showWeb() {
+    guideFromTopBar = false
+    backButton?.visibility = View.GONE
+    guideView.animate().alpha(0f).setDuration(150).withEndAction {
+      guideView.visibility = View.GONE
+    }.start()
+    webView.visibility = View.VISIBLE
+    webView.animate().alpha(1f).setDuration(200).start()
+    // The WebView may have rendered an error page before the engine was
+    // ready (engine boot takes seconds); reload now that it answers.
+    webView.reload()
+    if (topStatusBar.visibility == View.VISIBLE) hideTopBar()
+  }
+
+  /** Slide the thin status bar in (cold start over the Harness). */
+  private fun showTopBar(title: String) {
+    guideView.visibility = View.GONE
+    webView.visibility = View.VISIBLE
+    webView.animate().alpha(1f).setDuration(150).start()
+    topStatusLabel?.text = title
+    topStatusBar.visibility = View.VISIBLE
+    topStatusBar.animate().alpha(1f).setDuration(200).start()
+    startTopBarPulse()
+  }
+
+  private fun hideTopBar() {
+    stopTopBarPulse()
+    topStatusBar.animate().alpha(0f).setDuration(250).withEndAction {
+      topStatusBar.visibility = View.GONE
+      topStatusBar.alpha = 1f
+    }.start()
+  }
+
+  /** Breathing alpha on the status-bar dot (engine working). */
+  private fun startTopBarPulse() {
+    val dot = topPulseDot ?: return
+    val animator = android.animation.ValueAnimator.ofFloat(1f, 0.25f)
+    animator.duration = 900
+    animator.repeatMode = android.animation.ValueAnimator.REVERSE
+    animator.repeatCount = android.animation.ValueAnimator.INFINITE
+    animator.addUpdateListener { dot.alpha = it.animatedValue as Float }
+    animator.start()
+    topPulseAnimator = animator
+  }
+
+  private fun stopTopBarPulse() {
+    topPulseAnimator?.cancel()
+    topPulseAnimator = null
+    topPulseDot?.alpha = 1f
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    stopTopBarPulse()
+    engineManager.stopEngine()
   }
 
   /**
@@ -637,6 +953,7 @@ class MainActivity : ComponentActivity() {
     // on device: a double start kills the engine process).
     if (!engineFlowRunning.compareAndSet(false, true)) return
     AppLog.log("boot", "engine flow start")
+    val firstLaunch = !File(filesDir, "usr/bin/node").isFile
     Thread {
       try {
         val probe = EngineProbe.check()
@@ -648,32 +965,43 @@ class MainActivity : ComponentActivity() {
         }
         if (!engineManager.engineReady) {
           runOnUiThread {
-            progressText.visibility = View.VISIBLE
-            guideView.visibility = View.VISIBLE
-            engineStatus.text = getString(R.string.status_first_extract)
+            if (firstLaunch) {
+              showGuide()
+              showGuideStatus(getString(R.string.status_first_extract), null, true)
+            }
           }
           AppLog.log("boot", "extracting snapshot to " + engineManager.usrDir)
-          val ok = engineManager.extractSnapshot { done, total ->
+          val ok = engineManager.extractSnapshot { done, _ ->
             runOnUiThread {
-              // done is extracted bytes, total is the archive bytes — different
-              // baselines; show only the extracted amount.
-              engineStatus.text = getString(R.string.status_extracting, done / 1024 / 1024)
+              // done is extracted bytes; total is the archive bytes (different
+              // baselines) — show only the extracted amount.
+              showGuideStatus(
+                getString(R.string.status_extracting, done / 1024 / 1024), null, true,
+              )
             }
           }
           if (!ok) {
             runOnUiThread {
-              engineStatus.text = getString(R.string.status_extract_failed)
-              showGuide()
+              showGuideError(getString(R.string.status_extract_failed))
             }
             AppLog.log("boot", "extract FAILED")
             return@Thread
           }
           AppLog.log("boot", "extract ok, engineReady=" + engineManager.engineReady)
         }
+        // Quick path: engine already extracted → Harness visible now, the
+        // cold start is reported by the thin status bar.
+        if (engineManager.engineReady) {
+          runOnUiThread {
+            if (!firstLaunch) {
+              webView.visibility = View.VISIBLE
+              showTopBar(getString(R.string.status_engine_starting))
+            }
+          }
+        }
         if (!engineManager.startEngine()) {
           runOnUiThread {
-            engineStatus.text = getString(R.string.status_engine_start_failed)
-            showGuide()
+            showGuideError(getString(R.string.status_engine_start_failed))
           }
           AppLog.log("boot", "startEngine() returned false")
           return@Thread
@@ -703,8 +1031,7 @@ class MainActivity : ComponentActivity() {
           }
           AppLog.includeFile(java.io.File(filesDir, "engine.log"), "engine.log")
           runOnUiThread {
-            engineStatus.text = getString(R.string.status_engine_timeout)
-            showGuide()
+            showGuideError(getString(R.string.status_engine_timeout))
           }
         } else {
           AppLog.log("boot", "engine reachable, showing web")
@@ -712,8 +1039,7 @@ class MainActivity : ComponentActivity() {
       } catch (t: Throwable) {
         AppLog.log("boot", "engine flow exception", t)
         runOnUiThread {
-          engineStatus.text = getString(R.string.status_engine_start_failed)
-          showGuide()
+          showGuideError(getString(R.string.status_engine_start_failed))
         }
       } finally {
         engineFlowRunning.set(false)
@@ -727,10 +1053,8 @@ class MainActivity : ComponentActivity() {
     val manager = UpdateManager(this)
     manager.checkAndApply { status ->
       runOnUiThread {
-        engineStatus.text = status
-        progressText.visibility = View.VISIBLE
-        guideView.visibility = View.VISIBLE
-        webView.visibility = View.GONE
+        showGuide()
+        showGuideStatus(status, null, true)
       }
       try {
         statusFile.appendText(status + "\n")
@@ -757,18 +1081,5 @@ class MainActivity : ComponentActivity() {
       }.start()
     } catch (_: Throwable) {
     }
-  }
-
-  private fun showWeb() {
-    guideView.visibility = View.GONE
-    webView.visibility = View.VISIBLE
-    // The WebView may have rendered an error page before the engine was
-    // ready (engine boot takes seconds); reload now that it answers.
-    webView.reload()
-  }
-
-  private fun showGuide() {
-    webView.visibility = View.GONE
-    guideView.visibility = View.VISIBLE
   }
 }

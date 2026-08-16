@@ -3,10 +3,12 @@
   <string name="app_name">深度编码</string>
 
   <!-- Guide view -->
-  <string name="button_open_termux">打开 Termux</string>
+  
+  <string name="guide_brand_subtitle">本地 AI 编码环境</string>
   <string name="button_retry">重试</string>
   <string name="button_check_update">检查运行时更新</string>
   <string name="button_copy_log">复制诊断日志</string>
+  <string name="button_back_to_harness">返回 Harness</string>
   <string name="button_install_container">安装 Ubuntu 容器</string>
   <string name="container_install_done">Ubuntu 容器已就绪</string>
   <string name="container_install_failed">Ubuntu 容器安装失败</string>
@@ -28,7 +30,10 @@
   <string name="export_failed">导出失败</string>
 
   <!-- Engine flow status -->
-  <string name="status_first_extract">首次启动：正在解压运行时（约 70MB）…</string>
+  <string name="status_first_extract">正在准备你的工作空间…</string>
+  <string name="status_engine_starting">正在启动引擎…</string>
+  <string name="status_engine_starting_detail">冷启动最长约一分钟，点击查看详情</string>
+  <string name="status_engine_error_detail">点击查看详情</string>
   <string name="status_extracting">正在解压运行时… %1$d MB</string>
   <string name="status_extract_failed">运行时解压失败，请重试。</string>
   <string name="status_engine_start_failed">引擎启动失败，请重试。</string>
