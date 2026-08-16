@@ -4,6 +4,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 
@@ -39,6 +40,7 @@ class GuideWizard(
   private var consentExit: Button? = null
   private var keepAliveBlock: LinearLayout? = null
   private var keepAliveText: TextView? = null
+  private var spacer: View? = null
   private var keepAliveBattery: Button? = null
   private var keepAliveShizuku: Button? = null
   private var stepDots: Array<TextView> = emptyArray()
@@ -479,6 +481,7 @@ class GuideWizard(
       View(activity).apply {
         layoutParams = LinearLayout.LayoutParams(0, 0).apply { weight = 1f }
       }
+    this.spacer = spacer
     guide.addView(brand)
     guide.addView(buildStepIndicator())
     guide.addView(spacer)
@@ -558,13 +561,29 @@ class GuideWizard(
         LinearLayout
           .LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+            0,
           ).apply {
+            weight = 1f
             topMargin = (40 * d).toInt()
             leftMargin = (8 * d).toInt()
             rightMargin = (8 * d).toInt()
           }
-      addView(body)
+      // Text scrolls; the Agree/Exit buttons stay pinned to the card bottom so
+      // they are always reachable (a WRAP_CONTENT card in the fixed LinearLayout
+      // pushed them off-screen and the user could not agree at all).
+      val scroll =
+        ScrollView(activity).apply {
+          isFillViewport = true
+          layoutParams =
+            LinearLayout.LayoutParams(
+              ViewGroup.LayoutParams.MATCH_PARENT,
+              0,
+            ).apply {
+              weight = 1f
+            }
+        }
+      scroll.addView(body)
+      addView(scroll)
       addView(buttons)
     }
   }
@@ -580,6 +599,7 @@ class GuideWizard(
       accept()
     }
     consentExit?.setOnClickListener { exit() }
+    spacer?.visibility = View.GONE
     consentBlock?.visibility = View.VISIBLE
     statusCard?.visibility = View.GONE
     actionRow?.visibility = View.GONE
@@ -587,6 +607,7 @@ class GuideWizard(
 
   /** Back to the normal status card / action row. */
   fun hideConsent() {
+    spacer?.visibility = View.VISIBLE
     consentBlock?.visibility = View.GONE
     statusCard?.visibility = View.VISIBLE
     actionRow?.visibility = View.VISIBLE
@@ -649,13 +670,27 @@ class GuideWizard(
         LinearLayout
           .LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+            0,
           ).apply {
+            weight = 1f
             topMargin = (40 * d).toInt()
             leftMargin = (8 * d).toInt()
             rightMargin = (8 * d).toInt()
           }
-      addView(body)
+      // Status text scrolls; the action buttons stay pinned to the bottom.
+      val scroll =
+        ScrollView(activity).apply {
+          isFillViewport = true
+          layoutParams =
+            LinearLayout.LayoutParams(
+              ViewGroup.LayoutParams.MATCH_PARENT,
+              0,
+            ).apply {
+              weight = 1f
+            }
+        }
+      scroll.addView(body)
+      addView(scroll)
       addView(buttons)
     }
   }
@@ -670,6 +705,7 @@ class GuideWizard(
     keepAliveText?.text = statusText
     keepAliveBattery?.setOnClickListener { onBattery() }
     keepAliveShizuku?.setOnClickListener { onShizuku() }
+    spacer?.visibility = View.GONE
     keepAliveBlock?.visibility = View.VISIBLE
     statusCard?.visibility = View.GONE
     actionRow?.visibility = View.GONE
@@ -680,6 +716,7 @@ class GuideWizard(
   }
 
   fun hideKeepAlivePanel() {
+    spacer?.visibility = View.VISIBLE
     keepAliveBlock?.visibility = View.GONE
     statusCard?.visibility = View.VISIBLE
     actionRow?.visibility = View.VISIBLE
