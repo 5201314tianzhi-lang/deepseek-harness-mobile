@@ -7,7 +7,14 @@ plugins {
 // unreachable there). Same engine as the standalone jar — CI runs
 // `./gradlew ktlintCheck`, local devs with a JDK can run it too. The android
 // ruleset is enabled by `ktlint_android = true` in .editorconfig.
-val ktlintConfig by configurations.creating
+// The ktlint-cli artifact publishes both an `external` and a `shadowed`
+// (fat jar) variant; a plain resolvable configuration cannot choose between
+// them, so pin the attribute to the fat jar we want to run.
+val ktlintConfig by configurations.creating {
+  attributes {
+    attribute(org.gradle.api.attributes.Bundling.BUNDLING_ATTRIBUTE, objects.named(org.gradle.api.attributes.Bundling.SHADOWED))
+  }
+}
 
 dependencies {
   ktlintConfig("com.pinterest.ktlint:ktlint-cli:1.8.0")
