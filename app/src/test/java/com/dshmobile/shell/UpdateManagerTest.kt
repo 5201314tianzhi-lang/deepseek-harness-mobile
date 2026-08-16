@@ -44,7 +44,10 @@ class UpdateManagerTest {
     // First run: a fetcher that blocks until the test finishes, keeping the
     // run in-flight long enough for the subsequent calls to hit the CAS.
     val first = UpdateManager(ctx)
-    first.fetcher = { Thread.sleep(60_000); "" }
+    first.fetcher = {
+      Thread.sleep(60_000)
+      ""
+    }
     first.checkAndApply { statuses.add(it) }
     // Give the first run a moment to flip the in-flight flag.
     Thread.sleep(300)
