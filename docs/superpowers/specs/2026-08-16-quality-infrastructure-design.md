@@ -23,7 +23,8 @@
 
 - 不在 gradle 插件门户接插件:`plugins.gradle.org` 在 CN 网络(本项目的目标环境)实测被拦截,`org.jlleitschuh.gradle.ktlint` / `dev.ktlint` 均无法解析
 - 使用 Maven Central 上的 `com.pinterest.ktlint:ktlint-cli:1.8.0`(实测可达),在根构建里定义一个 `configuration` + `JavaExec` 自定义任务
-- 任务名 `ktlintCheck` / `ktlintFormat`(kscript 式调用 CLI,`--android` 标志),CI 与本地同一入口
+- 任务名 `ktlintCheck` / `ktlintFormat`,CI 与本地同一入口
+- android 规则集通过 `.editorconfig` 的 `ktlint_android = true` 启用(ktlint 1.x 移除了 `--android` CLI 标志);代码风格保持默认 `ktlint_official`(2 空格,与本库一致)
 - 实施时若任务包装遇到问题,回退:CI 里直接 `java -jar ktlint-cli.jar` 独立执行(逻辑等价,只是失去 gradle 入口)
 
 **lint 提升为阻塞**:

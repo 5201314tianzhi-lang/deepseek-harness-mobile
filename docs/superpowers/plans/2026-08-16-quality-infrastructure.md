@@ -14,7 +14,7 @@
 
 - 任务入口名必须是 `ktlintCheck` / `ktlintFormat`(CI 与本地同一命令)
 - ktlint 来源只能走 Maven Central,不得引入 plugins.gradle.org 依赖
-- ktlint 以 `--android` 标志运行;扫描仓库根,依赖默认规则尊重 `.gitignore`(`build/`、`.gradle/` 已忽略)
+- **ktlint 1.8 已移除 `--android` CLI 标志**:android 规则集改为 editorconfig 属性 `ktlint_android = true`(代码风格保持 `ktlint_official` 默认 2 空格,与本库一致;不用 `android_studio` 风格——那是 4 空格缩进)。所有 CLI 调用不带 `--android`,依赖 `.editorconfig`
 - Android lint:`abortOnError = true`;保留 `checkReleaseBuilds = false`(release 构建不被 lint 拖累)
 - CI 只跑 `assembleDebug lintDebug ktlintCheck`(不跑 release;release 走现有 release.yml)
 - 本机无法运行任何 gradle 任务(`maven.google.com` 超时,AGP 解析不了)——gradle 配置验证依赖 CI 首次运行;ktlint 真实逻辑用本机 JDK 21 + 同一 jar 独立验证
@@ -61,7 +61,12 @@ indent_size = 2
 
 [*.{yml,yaml}]
 indent_size = 2
+
+[*.{kt,kts}]
+ktlint_android = true
 ```
+
+说明:`ktlint_android = true` 是 ktlint 1.8 启用 android 规则集的方式(1.x 移除了 `--android` CLI 标志);代码风格保持 `ktlint_official` 默认(2 空格缩进,与本库一致)。
 
 注意:不设 `max_line_length`(ktlint 默认 140),避免人为收紧换行;若 Step 3 显示大量 max-line-length 违规,把 `max_line_length = 140` 显式补进 `[*.{kt,kts}]` 段再重跑。
 
@@ -69,7 +74,7 @@ indent_size = 2
 
 ```bash
 cd /root/projects/dsh-apk
-java -jar /tmp/opencode/ktlint/ktlint-cli.jar --android --reporter=plain . 2>&1 | tee /tmp/opencode/ktlint/check-before.txt
+java -jar /tmp/opencode/ktlint/ktlint-cli.jar --reporter=plain . 2>&1 | tee /tmp/opencode/ktlint/check-before.txt
 wc -l /tmp/opencode/ktlint/check-before.txt
 ```
 
@@ -78,7 +83,7 @@ Expected: 输出为当前违规列表(数量不重要,只是基线记录)。**�
 - [ ] **Step 4: 全库格式化**
 
 ```bash
-java -jar /tmp/opencode/ktlint/ktlint-cli.jar --android --format . 2>&1 | tail -20
+java -jar /tmp/opencode/ktlint/ktlint-cli.jar --format . 2>&1 | tail -20
 git status --short
 git diff --stat
 ```
@@ -90,7 +95,7 @@ Expected: 输出被修改文件列表;`git diff --stat` 显示改动全部为 .k
 - [ ] **Step 5: 复查 check 已零违规**
 
 ```bash
-java -jar /tmp/opencode/ktlint/ktlint-cli.jar --android --reporter=plain . 2>&1 | tee /tmp/opencode/ktlint/check-after.txt
+java -jar /tmp/opencode/ktlint/ktlint-cli.jar --reporter=plain . 2>&1 | tee /tmp/opencode/ktlint/check-after.txt
 wc -l /tmp/opencode/ktlint/check-after.txt
 ```
 
@@ -132,7 +137,7 @@ val ktlintCheck by tasks.registering(JavaExec::class) {
   description = "Check Kotlin code style with ktlint"
   classpath = ktlintConfig
   mainClass.set("com.pinterest.ktlint.Main")
-  args("--android")
+  args()
 }
 
 val ktlintFormat by tasks.registering(JavaExec::class) {
@@ -140,7 +145,7 @@ val ktlintFormat by tasks.registering(JavaExec::class) {
   description = "Format Kotlin code with ktlint"
   classpath = ktlintConfig
   mainClass.set("com.pinterest.ktlint.Main")
-  args("--android", "--format")
+  args("--format")
 }
 ```
 
@@ -166,7 +171,7 @@ val ktlintCheck by tasks.registering(JavaExec::class) {
   description = "Check Kotlin code style with ktlint"
   classpath = ktlintConfig
   mainClass.set("com.pinterest.ktlint.Main")
-  args("--android")
+  args()
 }
 
 val ktlintFormat by tasks.registering(JavaExec::class) {
@@ -174,7 +179,7 @@ val ktlintFormat by tasks.registering(JavaExec::class) {
   description = "Format Kotlin code with ktlint"
   classpath = ktlintConfig
   mainClass.set("com.pinterest.ktlint.Main")
-  args("--android", "--format")
+  args("--format")
 }
 ```
 
@@ -342,7 +347,7 @@ git commit -m "ci: quality gate workflow (compile + lint + ktlint) on push/PR"
 
 Every push to `main` and every PR runs `.github/workflows/ci.yml`:
 `./gradlew assembleDebug lintDebug ktlintCheck` — compile, Android lint
-(`abortOnError`, debug variant) and ktlint (`--android` ruleset) must all
+(`abortOnError`, debug variant) and ktlint (android ruleset via `.editorconfig`) must all
 pass or the change is blocked. ktlint runs from Maven Central
 (`com.pinterest.ktlint:ktlint-cli`), not the plugin portal, so it works in
 CN networks too; auto-format with `./gradlew ktlintFormat` before committing.
@@ -383,7 +388,7 @@ git commit -m "docs: quality gate commands in README + AGENTS.md"
 cd /root/projects/dsh-apk
 git log --oneline -6
 git status --short
-java -jar /tmp/opencode/ktlint/ktlint-cli.jar --android --reporter=plain . | wc -l
+java -jar /tmp/opencode/ktlint/ktlint-cli.jar --reporter=plain . | wc -l
 ```
 
 Expected: 5 个新提交(Task 1-5 各一个);working tree clean;ktlint 0 违规。
