@@ -23,7 +23,7 @@ class ContainerProbe(
   /** Returns null on success, or the combined output tail on failure. */
   fun smokeTest(): String? {
     return try {
-      val bash = File(usrDir, "bin/bash").absolutePath
+      val bash = File(usrDir, DshPaths.BASH_BIN).absolutePath
       val script = "var cp=require('child_process');" +
         "try{var r=cp.execFileSync(" + JSONObject.quote(bash) + ",['-c','echo CONTAINER_OK; id']," +
         "{timeout:30000,encoding:'utf8'});process.stdout.write(r)}catch(e){console.log('CONTAINER_FAIL: '+e.message)}"

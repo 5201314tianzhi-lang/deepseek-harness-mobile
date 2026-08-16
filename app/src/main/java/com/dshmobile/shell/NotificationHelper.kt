@@ -45,14 +45,14 @@ class NotificationHelper(private val activity: ComponentActivity) {
   private fun postNotification(title: String, text: String) {
     val manager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     if (Build.VERSION.SDK_INT >= 26) {
-      manager.createNotificationChannel(NotificationChannel("dsh", "dsh", NotificationManager.IMPORTANCE_DEFAULT))
+      manager.createNotificationChannel(NotificationChannel(DshPaths.NOTIFICATION_CHANNEL, DshPaths.NOTIFICATION_CHANNEL, NotificationManager.IMPORTANCE_DEFAULT))
     }
     val pending = android.app.PendingIntent.getActivity(
       activity, 0, Intent(activity, MainActivity::class.java), android.app.PendingIntent.FLAG_IMMUTABLE,
     )
     manager.notify(
       1,
-      NotificationCompat.Builder(activity, "dsh")
+      NotificationCompat.Builder(activity, DshPaths.NOTIFICATION_CHANNEL)
         .setSmallIcon(android.R.drawable.stat_notify_chat)
         .setContentTitle(title)
         .setContentText(text)

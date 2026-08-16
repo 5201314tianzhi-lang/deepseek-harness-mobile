@@ -85,7 +85,7 @@ class UnwindResolver(
   private fun ptyNodeFile(): File? {
     val f = File(
       usrDir,
-      "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
+      DshPaths.PTY_NODE,
     )
     return if (f.isFile) f else null
   }

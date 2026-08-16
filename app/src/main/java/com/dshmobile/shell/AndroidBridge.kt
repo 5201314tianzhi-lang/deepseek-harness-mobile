@@ -63,7 +63,7 @@ class AndroidBridge(
   companion object {
     /**
      * Map an ACTION_OPEN_DOCUMENT_TREE result onto a Termux-visible real path
-     * when possible: "primary:rel/path" -> /storage/emulated/0/rel/path.
+     * when possible: "primary:rel/path" -> <external storage>/rel/path.
      * Non-primary volumes fall back to the raw content:// tree URI (the page
      * can still use it as an opaque handle).
      * @param uri the tree URI from the system picker.
@@ -75,7 +75,14 @@ class AndroidBridge(
         val idx = docId.indexOf(':')
         val volume = if (idx > 0) docId.substring(0, idx) else ""
         val rel = if (idx > 0) docId.substring(idx + 1) else docId
-        if (volume == "primary" && rel.isNotEmpty()) "/storage/emulated/0/$rel" else uri.toString()
+        if (volume == "primary" && rel.isNotEmpty()) {
+          // Derived at runtime (no hardcoded /storage/emulated/0): the mount
+          // path can differ per device/multi-user setup.
+          val root = android.os.Environment.getExternalStorageDirectory().absolutePath
+          "$root/$rel"
+        } else {
+          uri.toString()
+        }
       } catch (_: Exception) {
         uri.toString()
       }

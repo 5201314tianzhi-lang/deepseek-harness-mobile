@@ -52,7 +52,9 @@ class MainActivity : ComponentActivity() {
   }
 
   companion object {
-    const val ACTION_UPDATE = "com.dshmobile.shell.action.UPDATE"
+    /** Debug-only update trigger (see onCreate); derived from the package so
+     *  a package rename never leaves a stale action literal. */
+    val ACTION_UPDATE: String get() = packageName + ".action.UPDATE"
   }
 
   /** AGP 8 does not generate BuildConfig by default; use the debuggable flag. */
@@ -114,8 +116,8 @@ class MainActivity : ComponentActivity() {
     // Quick path: snapshot AND mandatory container already provisioned →
     // go straight to the Harness; the cold start is covered by the thin
     // status bar, not the full-screen guide.
-    val provisioned = File(filesDir, "usr/bin/node").isFile &&
-      File(filesDir, "rootfs/bin/bash").isFile
+    val provisioned = File(filesDir, DshPaths.USR_DIR + "/" + DshPaths.NODE_BIN).isFile &&
+      File(filesDir, DshPaths.ROOTFS_DIR + "/" + DshPaths.ROOTFS_BASH).isFile
     if (provisioned) {
       harness.view.visibility = View.VISIBLE
     } else {
@@ -179,7 +181,7 @@ class MainActivity : ComponentActivity() {
   private fun keepScreenOn(enable: Boolean) {
     val power = getSystemService(Context.POWER_SERVICE) as PowerManager
     val lock = wakeLock ?: power.newWakeLock(
-      PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE, "dsh:screen",
+      PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE, DshPaths.WAKE_LOCK_TAG,
     ).also { wakeLock = it }
     if (enable && !lock.isHeld) lock.acquire()
     if (!enable && lock.isHeld) lock.release()
@@ -349,7 +351,7 @@ class MainActivity : ComponentActivity() {
         } else {
           AppLog.log("boot", "engine process alive but web service down")
         }
-        AppLog.includeFile(java.io.File(filesDir, "engine.log"), "engine.log")
+        AppLog.includeFile(java.io.File(filesDir, DshPaths.ENGINE_LOG), DshPaths.ENGINE_LOG)
         runOnUiThread {
           wizard.showGuideError(getString(R.string.status_engine_timeout))
         }

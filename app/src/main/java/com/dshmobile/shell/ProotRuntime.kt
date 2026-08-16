@@ -19,9 +19,9 @@ class ProotRuntime(
 
   val prootDir: File get() = File(context.filesDir, "proot")
   val prootBin: File get() = File(prootDir, "proot")
-  val rootfsDir: File get() = File(context.filesDir, "rootfs")
+  val rootfsDir: File get() = File(context.filesDir, DshPaths.ROOTFS_DIR)
 
-  fun rootfsReady(): Boolean = File(rootfsDir, "bin/bash").isFile
+  fun rootfsReady(): Boolean = File(rootfsDir, DshPaths.ROOTFS_BASH).isFile
 
   fun resolvConf(): File {
     val f = File(context.filesDir, "etc/resolv.conf")
@@ -78,8 +78,8 @@ class ProotRuntime(
    */
   fun ensureWrapper(): Boolean {
     if (!ensureProot()) return false
-    val bash = File(usrDir, "bin/bash")
-    val termux = File(usrDir, "bin/bash.termux")
+    val bash = File(usrDir, DshPaths.BASH_BIN)
+    val termux = File(usrDir, DshPaths.BASH_BIN + ".termux")
     // Wrapper considered current when it routes via proot AND carries both
     // markers added after the first release: the proot-dir LD_LIBRARY_PATH
     // (libtalloc/libandroid-shmem live next to the binary, outside the
@@ -93,14 +93,14 @@ class ProotRuntime(
     if (bash.isFile && !bash.readText(Charsets.US_ASCII).contains("#!")) {
       if (!bash.renameTo(termux)) return false
     }
-    val sh = File(usrDir, "bin/sh").absolutePath
+    val sh = File(usrDir, DshPaths.SH_BIN).absolutePath
     // Host-side temp dir: writable app storage. PROOT_TMP_DIR is proot's own
     // scratch space (glue rootfs, f2fs probe, mkdtemp); the container-internal
     // TMPDIR points at /tmp, which lives in the (writable) rootfs.
     val hostTmp = File(context.filesDir, "home/tmp").apply { mkdirs() }.absolutePath
     val wrapper = """
       #!$sh
-      if [ ! -x ${rootfsDir.absolutePath}/bin/bash ]; then
+      if [ ! -x ${rootfsDir.absolutePath}/${DshPaths.ROOTFS_BASH} ]; then
         echo "Ubuntu container not installed" >&2
         exit 127
       fi

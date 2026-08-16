@@ -12,7 +12,7 @@ import java.io.File
  */
 class EngineManager(private val context: Context, private val pickToken: String? = null) {
 
-  val usrDir = File(context.filesDir, "usr")
+  val usrDir = File(context.filesDir, DshPaths.USR_DIR)
   val homeDir = File(context.filesDir, "home")
 
   /**
@@ -27,7 +27,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
         ?: File(context.filesDir, "dshdata-fallback")
       return File(publicDocs, "dshdata")
     }
-  val nodeBin = File(usrDir, "bin/node")
+  val nodeBin = File(usrDir, DshPaths.NODE_BIN)
   private val dshBin = File(usrDir, "lib/node_modules/@deepseek-ai/dsh/lib/bin.js")
 
   /** pty.node loading diagnostics + _Unwind_Resume provider resolution. */
@@ -324,7 +324,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
     // additionally needs the TERMUX_EXEC__* env (see termuxExecEnv above).
     val ptyNode = File(
       usrDir,
-      "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
+      DshPaths.PTY_NODE,
     )
     val unwind = if (ptyNode.isFile) unwindResolver.resolveIfNeeded(ptyNode) else null
     val preloadValue = if (unwind != null) preloadPath + ":" + unwind else preloadPath
@@ -357,7 +357,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
         "TERMUX__ROOTFS" to usrDir.parentFile.absolutePath,
         "TERMUX__PREFIX" to usrDir.absolutePath,
         "TERMUX_APP__DATA_DIR" to context.filesDir.parentFile.absolutePath,
-        "TERMUX_APP__LEGACY_DATA_DIR" to "/data/data/com.dshmobile.shell",
+        "TERMUX_APP__LEGACY_DATA_DIR" to context.filesDir.parentFile.absolutePath,
         "TERMUX_VERSION" to "0.118.3",
         // Auth token for the directory-pick bridge endpoint (validated by the
         // web-compat plugin as x-dsh-pick-token).
@@ -373,7 +373,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
     } catch (t: Throwable) {
       Log.e(TAG, "engine start failed", t)
       AppLog.log("engine", "start FAILED", t)
-      AppLog.includeFile(File(context.filesDir, "engine.log"), "engine.log")
+      AppLog.includeFile(File(context.filesDir, DshPaths.ENGINE_LOG), DshPaths.ENGINE_LOG)
       false
     } finally {
       STARTING.set(false)
