@@ -91,7 +91,7 @@ class ProotRuntime(
         echo "Ubuntu container not installed" >&2
         exit 127
       fi
-      LD_LIBRARY_PATH=${prootDir.absolutePath}:\$LD_LIBRARY_PATH
+      LD_LIBRARY_PATH=${prootDir.absolutePath}:${'$'}LD_LIBRARY_PATH
       export LD_LIBRARY_PATH
       exec ${prootBin.absolutePath} -0 -r ${rootfsDir.absolutePath} \
         -b /proc -b /dev -b /sys \
