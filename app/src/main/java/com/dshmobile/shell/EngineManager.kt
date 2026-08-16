@@ -27,7 +27,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
         ?: File(context.filesDir, "dshdata-fallback")
       return File(publicDocs, "dshdata")
     }
-  private val nodeBin = File(usrDir, "bin/node")
+  val nodeBin = File(usrDir, "bin/node")
   private val dshBin = File(usrDir, "lib/node_modules/@deepseek-ai/dsh/lib/bin.js")
 
   /** pty.node loading diagnostics + _Unwind_Resume provider resolution. */
@@ -251,33 +251,40 @@ class EngineManager(private val context: Context, private val pickToken: String?
     }
   }
 
-  /** Start the dsh web engine from the embedded snapshot. */
-  fun startEngine(port: Int = 3080): Boolean {
+  /** Exec-reroute hook: bundled universal hook first, snapshot termux-exec as
+   *  fallback. Pair(hookPath, termuxExecEnv); null when no hook is usable. */
+  private fun execHook(): Pair<String, Map<String, String>>? {
     // LD_PRELOAD: prefer the bundled universal exec-reroute hook (covers every
     // SELinux domain and vendor, unlike the snapshot's termux-exec which only
     // handles untrusted_app_25/27). Fall back to the snapshot hook when the
     // bundled one is missing (should not happen on release builds).
     val bundledHook = resolveBundledHook()
     val snapshotHook = File(usrDir, "lib/libtermux-exec-ld-preload.so")
-    val preloadPath: String
-    val termuxExecEnv: Map<String, String>
     if (bundledHook != null) {
-      preloadPath = bundledHook.absolutePath
-      termuxExecEnv = emptyMap()
       AppLog.log("engine", "using bundled exec hook: " + bundledHook.absolutePath)
-    } else {
-      preloadPath = snapshotHook.absolutePath
-      termuxExecEnv = mapOf(
-        "TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE" to "force",
-        "TERMUX_EXEC__EXECVE_CALL__INTERCEPT" to "1",
-      )
-      AppLog.log("engine", "bundled exec hook missing, using snapshot termux-exec: " + snapshotHook.absolutePath)
-      if (!snapshotHook.exists()) {
-        Log.e(TAG, "engine start failed: no exec hook available at " + snapshotHook.absolutePath)
-        AppLog.log("engine", "start refused: no exec hook available")
-        return false
-      }
+      return bundledHook.absolutePath to emptyMap()
     }
+    AppLog.log("engine", "bundled exec hook missing, using snapshot termux-exec: " + snapshotHook.absolutePath)
+    if (!snapshotHook.exists()) {
+      Log.e(TAG, "engine start failed: no exec hook available at " + snapshotHook.absolutePath)
+      AppLog.log("engine", "start refused: no exec hook available")
+      return null
+    }
+    return snapshotHook.absolutePath to mapOf(
+      "TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE" to "force",
+      "TERMUX_EXEC__EXECVE_CALL__INTERCEPT" to "1",
+    )
+  }
+
+  /** Path of the active exec hook (for the container smoke test); null = none. */
+  val execHookPath: String? get() = execHook()?.first
+
+  /** Start the dsh web engine from the embedded snapshot. */
+  fun startEngine(port: Int = 3080): Boolean {
+    val hook = execHook()
+    if (hook == null) return false
+    val preloadPath = hook.first
+    val termuxExecEnv = hook.second
     // Executability diagnostics: an exec EACCES on the engine binary is the
     // #1 cause of "engine start timeout". Record the actual permission bits.
     AppLog.log("engine", "node.canExecute=" + nodeBin.canExecute() +

@@ -64,6 +64,12 @@ class ProotRuntime(
     return ok && talloc && shmem
   }
 
+  /** Full container initialization: proot runtime + deps + bash wrapper
+   *  (idempotent). Rootfs presence is checked separately (rootfsReady). */
+  fun ensureInitialized(): Boolean {
+    return ensureProot() && ensureWrapper()
+  }
+
   /**
    * Replace usr/bin/bash with a proot wrapper (original kept as bash.termux).
    * Idempotent. The wrapper is generated at runtime with dynamic paths so the

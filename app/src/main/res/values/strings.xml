@@ -42,6 +42,7 @@
   <string name="status_engine_error_detail">Tap for details.</string>
   <string name="status_container_installing">Installing Ubuntu container…</string>
   <string name="status_container_installing_detail">Downloading ~35 MB, one-time setup</string>
+  <string name="status_container_init_failed">Ubuntu container failed to initialize. Please retry.</string>
   <string name="status_ready_to_launch">Everything is ready</string>
   <string name="status_ready_to_launch_detail">Launch the engine to enter your workspace</string>
 

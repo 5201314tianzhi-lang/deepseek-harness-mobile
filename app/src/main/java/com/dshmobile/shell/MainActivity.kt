@@ -39,6 +39,17 @@ class MainActivity : ComponentActivity() {
    *  could never be released and multiple locks would leak). */
   private var wakeLock: PowerManager.WakeLock? = null
 
+  /** Container smoke probe: runs a real command inside the proot container
+   *  through the same chain the agent uses (node → bash wrapper → proot). */
+  private val containerProbe by lazy {
+    ContainerProbe(
+      engineManager.usrDir,
+      engineManager.homeDir,
+      engineManager.nodeBin,
+      engineManager.execHookPath,
+    )
+  }
+
   companion object {
     const val ACTION_UPDATE = "com.dshmobile.shell.action.UPDATE"
   }
@@ -223,7 +234,12 @@ class MainActivity : ComponentActivity() {
           setupRan = true
           AppLog.log("boot", "extract ok, engineReady=" + engineManager.engineReady)
         }
-        // Step 2 — Ubuntu container is mandatory: install it unless ready.
+        // Step 2 — Ubuntu container is mandatory: install when missing, then
+        // initialize (proot runtime + wrapper) and smoke-test the full chain
+        // (proot deps, PROOT_TMP_DIR, wrapper, rootfs bash) with a real
+        // in-container command. A failing container counts as an engine start
+        // failure — the engine is not started without it. Every sub-step is
+        // logged under boot: so the container init is visible in diagnostics.
         val proot = ProotRuntime(this, engineManager.usrDir, File(engineManager.ensureDshDataHome(), "workspace"))
         if (!proot.rootfsReady()) {
           runOnUiThread {
@@ -234,10 +250,10 @@ class MainActivity : ComponentActivity() {
               true,
             )
           }
-          AppLog.log("boot", "installing mandatory Ubuntu container")
+          AppLog.log("boot", "container init: rootfs missing, downloading")
           val ok = RootfsDownloader.install(applicationContext)
           if (!ok) {
-            AppLog.log("boot", "container install failed")
+            AppLog.log("boot", "container init FAILED: rootfs install failed")
             runOnUiThread {
               wizard.renderSteps(1, 1)
               wizard.showGuideError(getString(R.string.container_install_failed))
@@ -245,7 +261,20 @@ class MainActivity : ComponentActivity() {
             return@Thread
           }
           setupRan = true
-          AppLog.log("boot", "container ready")
+          AppLog.log("boot", "container init: rootfs installed")
+        }
+        AppLog.log("boot", "container init: proot runtime=" + proot.ensureInitialized() +
+          " rootfs=" + proot.rootfsReady())
+        val smoke = containerProbe().smokeTest()
+        if (smoke != null) {
+          AppLog.log("boot", "container init FAILED: " + smoke)
+          runOnUiThread {
+            wizard.renderSteps(1, 1)
+            wizard.showGuideError(getString(R.string.status_container_init_failed))
+          }
+          return@Thread
+        }
+        AppLog.log("boot", "container init: smoke test pass")
         }
         // Step 3 — after any setup, the user launches the engine manually;
         // a fully provisioned install (snapshot + container) starts straight
