@@ -413,13 +413,17 @@ class EngineManager(private val context: Context, private val pickToken: String?
   private fun resolveBundledHook(): File? {
     val native = File(context.applicationInfo.nativeLibraryDir, "libexec-hook.so")
     if (native.isFile) return native
+    val target = File(context.filesDir, "libexec-hook.so")
+    // Reuse an already-extracted hook: it exists on every run after the
+    // first, and its write bit was stripped (W^X policy) — overwriting it
+    // would fail with EACCES on reinstall-without-data-clear.
+    if (target.isFile && target.length() > 0L) return target
     return try {
       val abi = when {
         android.os.Build.SUPPORTED_ABIS.any { it.startsWith("arm64") } -> "arm64-v8a"
         android.os.Build.SUPPORTED_ABIS.any { it.startsWith("x86_64") } -> "x86_64"
         else -> null
       } ?: return null
-      val target = File(context.filesDir, "libexec-hook.so")
       java.util.zip.ZipFile(context.applicationInfo.sourceDir).use { zip ->
         val entry = zip.getEntry("lib/$abi/libexec-hook.so") ?: return null
         zip.getInputStream(entry).use { input ->

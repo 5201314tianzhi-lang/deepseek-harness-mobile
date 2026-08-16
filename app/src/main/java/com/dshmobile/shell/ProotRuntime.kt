@@ -39,6 +39,9 @@ class ProotRuntime(
   }
 
   private fun extractAsset(name: String, target: File, exec: Boolean): Boolean {
+    // Reuse an already-extracted asset: overwriting one whose write bit was
+    // stripped (W^X policy) fails with EACCES on reinstall-without-clear.
+    if (target.isFile && target.length() > 0L) return true
     return try {
       val abi = abiAsset() ?: return false
       target.parentFile?.mkdirs()
