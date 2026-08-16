@@ -116,6 +116,31 @@ jobs:
           fi
           ls -la release.keystore
 
+      - name: Package proot runtime (${{ matrix.abi }})
+        run: |
+          # Termux proot + libtalloc + libandroid-shmem debs, unpacked into
+          # APK assets. Zero compilation: same build ecosystem as the snapshot.
+          if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
+            ABI=aarch64
+          else
+            ABI=x86_64
+          fi
+          BASE="https://packages.termux.dev/apt/termux-main/pool/main"
+          mkdir -p /tmp/proot && cd /tmp/proot
+          curl -sL -o proot.deb "$BASE/p/proot/proot_5.1.107.91_${ABI}.deb"
+          curl -sL -o talloc.deb "$BASE/libt/libtalloc/libtalloc_2.4.3_${ABI}.deb"
+          curl -sL -o shmem.deb "$BASE/liba/libandroid-shmem/libandroid-shmem_0.7_${ABI}.deb"
+          mkdir -p x && for d in proot talloc shmem; do
+            ar x $d.deb && tar -xf data.tar.xz -C x && rm -f data.tar.xz
+          done
+          P=x/data/data/com.termux/files
+          cp "$P/usr/bin/proot" . && cp "$P/usr/lib/libtalloc.so.2" "$P/usr/lib/libandroid-shmem.so" .
+          ls -la proot libtalloc.so.2 libandroid-shmem.so
+          file proot | grep -q ELF || { echo "proot not ELF"; exit 1; }
+          readelf --dyn-syms proot | grep -q talloc || { echo "proot missing talloc ref"; exit 1; }
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/proot/${{ matrix.abi }}"
+          cp proot libtalloc.so.2 libandroid-shmem.so "$GITHUB_WORKSPACE/app/src/main/assets/proot/${{ matrix.abi }}/"
+
       - name: Package unwind patch lib (${{ matrix.abi }})
         run: |
           # The snapshot's C++ runtime (libc++_shared.so) does not export
