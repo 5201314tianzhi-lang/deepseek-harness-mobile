@@ -1,36 +1,43 @@
 # dsh-mobile-apk
 
-Android shell for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh):
-a WebView UI over an **embedded Termux runtime snapshot** (extract-and-run, no
-Termux app required), with a SAF directory bridge, a keep-alive foreground
-service, an engine watchdog, and manifest-driven online runtime updates. One
-APK installs a full dsh web agent that can actually execute bash.
+Android shell for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh),
+app name **深度编码**: a WebView UI over an **embedded Termux runtime snapshot**
+(extract-and-run, no Termux app required), with a **proot Ubuntu container** for the
+agent's shell, a SAF directory bridge, a keep-alive foreground service, an engine
+watchdog, and manifest-driven online runtime updates. One APK installs a full dsh
+web agent that can actually execute bash.
 
 ## Features
 
-- **Embedded runtime** — ships a ~70MB xz snapshot (node + bash + coreutils +
-  dsh + plugins); first launch extracts it in ~10s and starts the engine from
-  the app's own files. Fully offline.
-- **Mobile UI** — system WebView over `http://127.0.0.1:3080`; external links
-  are routed to the system browser, only engine-same-origin pages stay inside
-  the WebView.
+- **Embedded runtime** — ships a ~79MB APK whose `snapshot.tar.xz` asset extracts
+  to ~484MB (`node` + `bash` + coreutils + dsh + plugins) on first launch. Fully
+  offline after extraction.
+- **Ubuntu container** — a proot-based Ubuntu 24.04 rootfs (~35MB, downloaded from
+  the official Ubuntu mirrors on first run with SHA-256 verification) gives the
+  agent a standard Linux environment: `apt`, system packages, root-like access.
+  The agent's `bash` is routed into the container through a generated wrapper.
+- **First-run consent gate** — before anything installs, the app shows the
+  storage/time footprint and what to expect; the user must explicitly agree
+  (nothing downloads or extracts otherwise).
+- **Mobile UI** — white, three-step boot wizard (runtime → container → launch)
+  over `http://127.0.0.1:3080`; external links are routed to the system browser,
+  only engine-same-origin pages stay inside the WebView.
 - **Keep-alive** — foreground service (`dataSync` type) with a user-visible
-  notification plus a 5s watchdog that restarts a dead engine process.
+  notification plus a 5s watchdog that restarts a dead engine process. The engine
+  lifecycle belongs to this service (the activity never kills it).
 - **Online runtime updates** — HTTPS manifest-driven snapshot swap (download →
   SHA-256 verify → staged extraction → atomic switch with rollback →
-  auto-restart via the watchdog); the running runtime can update itself
-  without an APK update.
-- **Universal exec layer** — a bundled `libexec-hook.so` (LD_PRELOAD)
-  reroutes every ELF exec in the engine tree through `/system/bin/linker64`,
-  the mechanism Android permits for app data on all versions and vendors
-  (Android 15+ exec bans, Huawei/EMUI W^X). The main process uses a
-  direct-exec → linker64 fallback; extracted executables get the write bit
-  stripped (rwx→r-x) for W^X compliance.
-  SHA-256 verify → staged extraction → atomic switch with rollback →
-  auto-restart via the watchdog); the running runtime can update itself
-  without an APK update.
-- **SAF directory bridge** — `pickDirectory` maps a user-picked tree to a
-  real path (`/storage/emulated/0/…`) the bash process can access directly.
+  auto-restart via the watchdog); the running runtime can update itself without
+  an APK update.
+- **Universal exec layer** — a bundled `libexec-hook.so` (LD_PRELOAD) reroutes
+  every same-ABI ELF exec in the engine tree through `/system/bin/linker64`, the
+  mechanism Android permits for app data on all versions and vendors (Android 15+
+  exec bans, Huawei/EMUI W^X). The main process uses a direct-exec → linker64
+  fallback; extracted executables get the write bit stripped (rwx→r-x) for W^X
+  compliance. A bundled `libunwind-patch.so` supplies `_Unwind_Resume` so
+  node-pty loads.
+- **SAF directory bridge** — `pickDirectory` maps a user-picked tree to the real
+  path the container's bash can access directly.
 - **Public user data** — settings, sessions, storages and attachments live in
   `/storage/emulated/0/Documents/dshdata` (visible to file managers, backed up,
   survives reinstall; API keys stay private).
@@ -39,50 +46,91 @@ APK installs a full dsh web agent that can actually execute bash.
 
 | Component | File | Responsibility |
 |---|---|---|
-| `MainActivity` | `app/src/main/java/com/dshmobile/shell/MainActivity.kt` | WebView shell, JS bridge wiring, engine-first boot flow, in-app downloads, directory picking, notifications |
+| `MainActivity` | `app/src/main/java/com/dshmobile/shell/MainActivity.kt` | Orchestration: first-run consent, boot flow, engine start, exports, update trigger |
+| `GuideWizard` | `.../GuideWizard.kt` | White wizard UI: consent card, three steps, status card, cold-start top bar with pulse dot |
+| `HarnessWebView` | `.../HarnessWebView.kt` | WebView config, engine-source navigation gate, compat-polyfill injection, reload-if-failed policy |
 | `AndroidBridge` | `.../AndroidBridge.kt` | `window.androidBridge` JS interface (protocol v1) |
-| `EngineManager` | `.../EngineManager.kt` | Snapshot extraction, dshdata migration/relinking, engine process lifecycle and env |
-| `EngineService` | `.../EngineService.kt` | Foreground service: keep-alive + 5s watchdog |
+| `PickerBridge` | `.../PickerBridge.kt` | SAF directory/file picking; pending callback survives activity recreation |
+| `ExportFlow` | `.../ExportFlow.kt` | In-app downloads to MediaStore Downloads (no redirect following) |
+| `NotificationHelper` | `.../NotificationHelper.kt` | Notification channel + test notifications |
+| `EngineManager` | `.../EngineManager.kt` | Snapshot extraction, dshdata migration/relinking, engine process env and lifecycle |
+| `EngineService` | `.../EngineService.kt` | Foreground service: owns the engine lifecycle + 5s watchdog |
 | `EngineProbe` | `.../EngineProbe.kt` | HTTP reachability probe of `127.0.0.1:3080` |
-| `SnapshotExtractor` | `.../SnapshotExtractor.kt` | xz-tar extraction with path-traversal guard and Android exec-attribute stamping |
-| `UpdateManager` | `.../UpdateManager.kt` | Runtime snapshot download/verify/swap |
+| `EngineSource` | `.../EngineSource.kt` | Engine-source URL/session-export matching |
+| `ProotRuntime` | `.../ProotRuntime.kt` | Proot + libtalloc + libandroid-shmem assets, generated bash wrapper, env injection |
+| `RootfsDownloader` | `.../RootfsDownloader.kt` | Ubuntu rootfs download, SHA-256 verify, staged atomic install |
+| `ContainerProbe` | `.../ContainerProbe.kt` | Container smoke test (node → wrapper → proot → container bash) |
+| `SnapshotExtractor` | `.../SnapshotExtractor.kt` | xz-tar extraction: traversal guard, symlinks, hard links, W^X write-bit strip, exec-attribute stamp |
+| `UnwindResolver` | `.../UnwindResolver.kt` | `_Unwind_Resume` provider resolution + pty.node load diagnostics |
+| `UpdateManager` | `.../UpdateManager.kt` | Runtime snapshot download/verify/swap (single-flight, unique staging) |
+| `Downloader` | `.../Downloader.kt` | Shared HTTP download + SHA-256 |
+| `DshPaths` | `.../DshPaths.kt` | Central registry of app-relative paths (no hardcoded package paths) |
 | `ShizukuSupport` | `.../ShizukuSupport.kt` | Optional Shizuku presence/status detection (keep-alive boost) |
 
-### Engine-first boot flow (`MainActivity.startEngineFlow`)
+### First-run flow (`MainActivity.onCreate`)
 
-1. Probe `127.0.0.1:3080`; if already running (Termux or a previous embedded
-   engine), show the WebView immediately.
-2. Otherwise extract the embedded snapshot on first launch (`filesDir/usr`),
-   then start the engine:
-   `node --expose-internals <usr>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080`.
-3. Poll the probe for up to 30s; on success start the foreground service and
-   the optional Shizuku keep-alive boost.
-4. Any failure falls back to the guide view (status + retry + Termux +
-   update button).
+1. **Consent gate** — on a fresh install the app shows the consent card
+   (storage ≈ 600MB: ~79MB APK + ~484MB runtime + ~35MB container; time 2-5 min;
+   what to expect). Nothing installs until "Agree & start"; "Exit" leaves the
+   page (the activity is finished only on explicit exit). Agreement is recorded
+   in `SharedPreferences` and survives upgrades.
+2. **Step 1 — runtime**: extract the embedded snapshot to `filesDir/usr`
+   (progress shown), then
+3. **Step 2 — container** (mandatory): download the Ubuntu rootfs if missing
+   (SHA-256 verified against `SHA256SUMS`), install proot + libtalloc +
+   libandroid-shmem, generate the `usr/bin/bash` wrapper, and smoke-test the
+   whole chain inside the container (`echo CONTAINER_OK; id`). A failing
+   container counts as an engine-start failure.
+4. **Step 3 — launch**: the user presses "Launch engine"; the engine starts
+   (`node --expose-internals <usr>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js
+   web --port 3080`) and the page is polled for up to 60s.
+5. **Quick path** — when everything is already provisioned, the app cold-starts
+   straight into the Harness under a thin status bar (breathing pulse dot,
+   fades out 6s after the engine answers).
 
-The flow is guarded by an in-flight CAS flag: `onCreate` and `onResume` both
-trigger it, and a double-threaded extract/start would kill the engine process.
+The flow is guarded by an in-flight CAS flag (`onCreate` and `onResume` both
+trigger it; a double-threaded extract/start would kill the engine process).
 
-### Engine lifecycle (`EngineManager`)
+### Engine lifecycle (`EngineService` owns it)
 
-- Process-wide `STARTING` CAS plus a 90s cooldown window prevent double starts
-  (cold node boot takes 20–45s; a faster watchdog would race a healthy boot
-  and produce `EADDRINUSE`).
-- The cooldown is cleared when the tracked engine process is dead — the 5s
-  watchdog can then restart a crashed engine immediately.
-- `startEngine` asserts the termux-exec `LD_PRELOAD` library before starting
-  (missing it silently breaks every child exec).
+- `EngineService` is a foreground service; its watchdog **always arms** once the
+  service runs (poll every 5s; restart the engine when the probe fails and the
+  snapshot is ready). Task bodies are fully guarded — a throwing tick never
+  kills the watchdog.
+- Process-wide `STARTING` CAS + a 90s cooldown window prevent double starts
+  (cold node boot takes 20–45s). The cooldown is cleared when the tracked
+  process is dead; a process still alive past the cooldown is considered hung
+  and killed before a respawn (it would otherwise hold the port and every new
+  start would die with `EADDRINUSE`).
+- `MainActivity.onDestroy` never stops the engine — backgrounding must not kill
+  a healthy process that the watchdog would then cold-boot again. The engine is
+  stopped only when the service itself stops.
 - If direct exec is denied (`Permission denied`, Android 15+), the process is
   spawned through `/system/bin/linker64` instead.
+- The pick token (`DSH_PICK_TOKEN`) is a process-level singleton, so a
+  watchdog-restarted engine keeps the same token the WebView bridge holds.
+
+### Container integration
+
+- Integration point: the agent's `dsh-bash-local` spawns `bash` from `PATH`;
+  `usr/bin/bash` is a runtime-generated shebang wrapper that routes into proot.
+  The original bash stays as `bash.termux`.
+- The wrapper injects `LD_LIBRARY_PATH` (proot's libtalloc/libandroid-shmem),
+  `PROOT_TMP_DIR` (proot needs a writable temp dir; the Termux default is
+  inaccessible) and `TMPDIR` (container temp).
+- `ContainerProbe` runs the exact agent chain (node → wrapper → proot → container
+  bash) with a bounded 30s wait; failure = engine start failure.
 
 ### Storage layout
 
 | Path | Purpose |
 |---|---|
 | `filesDir/usr` | Extracted runtime snapshot (node, bash, coreutils, dsh, plugins) |
+| `filesDir/rootfs` | Ubuntu 24.04 container rootfs (`rootfs-staging`/`rootfs-old` during atomic swap) |
 | `filesDir/home` | `HOME` for the engine; `filesDir/home/.dsh` is `DSH_HOME` (private, holds `.credentials.yaml`) |
 | `filesDir/engine.log` | Engine stdout/stderr (redirected, merged) |
-| `filesDir/update.tar.xz`, `update-stage`, `usr-old` | Runtime-update staging/rollback |
+| `filesDir/update-<uuid>.tar.xz`, `update-stage-<uuid>`, `usr-old` | Runtime-update staging/rollback (unique names, always cleaned) |
+| `filesDir/libexec-hook.so`, `unwind` assets | Exec-reroute hook + `_Unwind_Resume` patch lib |
 | `/storage/emulated/0/Documents/dshdata` | User data: `settings.yaml`, `sessions/`, `storages/`, `attachments/`, `profiles/{web,headless}/` |
 
 User data is migrated item-by-item from the private `DSH_HOME` to the public
@@ -101,12 +149,12 @@ again.
 |---|---|---|
 | `version` | getter → string | Bridge protocol version (`"1.0"`) for feature detection |
 | `checkEngine` | () → string | Probes 127.0.0.1:3080; JSON `{running, latencyMs, error?}` |
-| `keepScreenOn` | (enable: boolean) | Screen-on wake lock (single shared instance) |
+| `keepScreenOn` | (enable: boolean) | Screen-on wake lock (single shared instance, released on activity destroy) |
 | `showNotification` | (title, text) | Test notification channel (POST_NOTIFICATIONS requested at runtime; queued and re-sent after grant) |
 | `pickDirectory` | (callbackId: string) | SAF tree picker (ACTION_OPEN_DOCUMENT_TREE); result delivered async |
 | `hasAllFilesAccess` | () → boolean | True when the app holds All Files Access (API 30+) |
 | `requestAllFilesAccess` | () → void | Opens the system All Files Access screen |
-| `getPickToken` | () → string/null | One-shot session token for the engine-side pick endpoint |
+| `getPickToken` | () → string/null | Process-wide session token for the engine-side pick endpoint (stable across engine restarts) |
 
 Async results are delivered back to the page:
 
@@ -124,22 +172,24 @@ The bridge decouples the APK from the dsh version: pages feature-detect on
 
 ### Directory picking and All Files Access
 
-External workspaces require the bash process to reach the picked real path:
+External workspaces require the container's bash to reach the picked real path:
 the engine env carries `DSH_PICK_TOKEN` and the web-compat plugin validates it
 as `x-dsh-pick-token`. On API 30+ without All Files Access the app opens the
 system grant screen and signals `onPermissionRequired`; on API < 30 the pick
-settles as cancelled (no such permission model).
+settles as cancelled (no such permission model, external workspace
+unavailable). The primary volume maps to the runtime-derived external storage
+path (no hardcoded `/storage/emulated/0`).
 
 ### Session-log export and downloads
 
 Engine-same-origin downloads (`/api/session.export` and everything else from
-127.0.0.1:3080) are performed in-app over `HttpURLConnection` and written
-streaming to MediaStore Downloads (API 29+, no permission needed) with a
-200MB cap. Rationale: browser navigations carry `Origin: null` /
-`sec-fetch-site` markers and are rejected (403) by dsh's `/api`
-browser-trust fence; the in-app connection carries no browser markers and
-passes. Downloads are deduplicated across the two entry points
-(`shouldOverrideUrlLoading` + download listener) by an in-flight guard.
+127.0.0.1:3080) are performed in-app over `HttpURLConnection` (redirects
+disabled — a redirect target is not trusted) and written streaming to MediaStore
+Downloads (API 29+, no permission needed) with a 200MB cap. Rationale: browser
+navigations carry `Origin: null` / `sec-fetch-site` markers and are rejected
+(403) by dsh's `/api` browser-trust fence; the in-app connection carries no
+browser markers and passes. Downloads are deduplicated across the two entry
+points (`shouldOverrideUrlLoading` + download listener) by an in-flight guard.
 
 ### WebView security boundary
 
@@ -150,6 +200,12 @@ passes. Downloads are deduplicated across the two entry points
   prefix.
 - `allowFileAccess=false`, mixed content never allowed, `FORCE_DARK_AUTO` for
   system theme following.
+- The page is reloaded only when it previously failed to load (error page shown
+  before the engine answered); healthy pages keep their state across
+  foreground returns.
+- A JS compatibility layer (`assets/js/compat-polyfills.js`) is injected before
+  page scripts on old WebViews (AbortSignal.any, Promise.any, structuredClone,
+  groupBy, …), all feature-detected.
 - Cleartext traffic is restricted to `127.0.0.1`/`localhost` via
   `network_security_config.xml`; everything else requires TLS.
 
@@ -160,11 +216,15 @@ passes. Downloads are deduplicated across the two entry points
    `sha256` rejects the update (no integrity protection otherwise).
 2. The snapshot is downloaded streaming with a 500MB cap, SHA-256 is verified
    against the manifest.
-3. It is extracted to a staging directory (never touching the live tree), the
-   new `usr` is validated (must contain `bin/node`), then swapped:
-   `usr → usr-old → new usr`, with rollback if the swap fails.
-4. The old engine process is killed; the EngineService watchdog restarts it
-   from the new runtime within seconds.
+3. It is extracted to a **unique** staging directory (`update-stage-<uuid>`,
+   never touching the live tree; concurrent runs are single-flighted), the new
+   `usr` is validated (must contain `bin/node`), then swapped:
+   `usr → usr-old → new usr`, with rollback if the swap fails. Staging and
+   tarball are always cleaned up.
+4. The old engine process is killed (`pkill -f bin.js`); if the kill fails the
+   user is told to restart the app (the watchdog only restarts a dead engine).
+   Otherwise the EngineService watchdog restarts it from the new runtime within
+   seconds.
 
 Test trigger: `adb shell am start -n com.dshmobile.shell/.MainActivity -a com.dshmobile.shell.action.UPDATE`
 (debug builds only — the activity is exported as the LAUNCHER, so release
@@ -178,9 +238,9 @@ production builds override it via `UpdateManager.manifestUrl`.
 Requirements: JDK 17+, Android SDK (compileSdk 36), Gradle 9.7.0 via wrapper.
 
 ```sh
-# 1. Prepare the runtime snapshot (required, ~70MB, distributed as a Release asset)
-#    Option A: download snapshot-x86_64.tar.xz from GitHub Releases
-#    Option B: build on a Termux device (scripts/make-snapshot.sh) and pull it
+# 1. Prepare the runtime snapshot (required, distributed as a CI asset)
+#    The release workflow downloads snapshot-arm64.tar.xz / snapshot-x86_64.tar.xz
+#    from the upstream releases and bundles it into assets/.
 mkdir -p app/src/main/assets
 cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
 
@@ -189,19 +249,29 @@ cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
 # output: app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Release builds (CI) additionally pass:
+
+```sh
+./gradlew assembleRelease \
+  -PversionName=0.1.0 -PversionCode=100 \   # derived from the release tag
+  -PabiFilter=arm64-v8a                      # one ABI per matrix leg
+```
+
 Build config: AGP 9.3.1, Kotlin 2.4.10, minSdk 26, targetSdk 34 (Android 15+
 app-data ELF exec restrictions are covered by the linker64 fallback). The
 extractor strips the write bit from executables (W^X: Huawei/EMUI refuse to
-execute writable files). `snapshot.tar.xz` is excluded
-from resource compression (`noCompress += "xz"`); lint is non-blocking for
-offline environments.
+execute writable files). `snapshot.tar.xz` is excluded from resource
+compression (`noCompress += "xz"`); lint is non-blocking for offline
+environments. **The signing keystore lives only in the repo secret
+`RELEASE_KEYSTORE_B64`** — the workflow refuses to build without it (never
+publishes or generates keys).
 
 ## Permissions
 
 | Permission | Purpose |
 |---|---|
-| `INTERNET` | WebView + engine probe |
-| `MANAGE_EXTERNAL_STORAGE` | External workspace: bash reaches user-picked directories (All Files Access, requested at runtime) |
+| `INTERNET` | WebView + engine probe + rootfs/update downloads |
+| `MANAGE_EXTERNAL_STORAGE` | External workspace: container bash reaches user-picked directories. On Android 11+ this is granted at install time (All Files Access); on Android 10 and below the model does not exist and the external workspace is unavailable |
 | `POST_NOTIFICATIONS` | Notification channel (requested at runtime on API 33+) |
 | `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` | Keep-alive service (`dataSync` type) |
 
@@ -229,7 +299,11 @@ installing the wrong one extracts fine but the engine cannot execute.
 - Directory picking maps only the `primary` volume to a real path; other
   volumes fall back to the opaque `content://` tree URI.
 - The engine restarts from the new runtime only after the watchdog's next poll
-  (up to ~5s after the swap).
+  (up to ~5s after the swap), and only if the old process was successfully
+  killed; a missed kill surfaces a restart hint.
+- The Ubuntu container needs network on first run (~35MB from
+  cdimage.ubuntu.com); a failed checksum fetch refuses the install (no
+  unverified rootfs).
 
 ## Related projects
 

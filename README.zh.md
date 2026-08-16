@@ -1,28 +1,34 @@
 # dsh-mobile-apk
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) 的 Android 壳：
-**内嵌 Termux 运行时快照**（解压即跑，无需安装 Termux）+ WebView UI，附 SAF 目录桥、
-保活前台服务、引擎看门狗与 manifest 驱动的运行时在线更新。一个 APK 即可装出一个
-真正能执行 bash 的 dsh web 智能体。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) 的 Android 壳，
+应用名 **深度编码**：**内嵌 Termux 运行时快照**（解压即跑，无需安装 Termux）+ WebView UI，
+附带 **proot Ubuntu 容器**（agent 的 shell 环境）、SAF 目录桥、保活前台服务、引擎看门狗
+与 manifest 驱动的运行时在线更新。一个 APK 即可装出一个真正能执行 bash 的 dsh web 智能体。
 
 ## 特性
 
-- **内嵌运行时** — 打包 ~70MB xz 快照（node + bash + coreutils + dsh + 插件）；
-  首次启动约 10s 解压，从应用自身目录启动引擎，完全离线可用。
-- **移动 UI** — 系统 WebView 访问 `http://127.0.0.1:3080`；外部链接交给系统
-  浏览器，仅引擎同源页面留在 WebView 内。
-- **保活** — 前台服务（`dataSync` 类型，带常驻通知）+ 5s 看门狗，引擎进程
-  死亡自动重启。
+- **内嵌运行时** — ~79MB APK 内嵌 `snapshot.tar.xz`，首次启动解压出约 484MB
+  （node + bash + coreutils + dsh + 插件），解压后完全离线可用。
+- **Ubuntu 容器** — proot 驱动的 Ubuntu 24.04 rootfs（约 35MB，首次运行时从
+  Ubuntu 官方源下载并做 SHA-256 校验），让 agent 获得标准 Linux 环境：
+  `apt`、系统软件包、类 root 权限。agent 的 `bash` 经生成的包装脚本路由进容器。
+- **首次知情同意门** — 开始安装前展示存储/耗时占用与须知，用户必须明确同意
+  （否则不下载、不解压任何东西）。
+- **移动 UI** — 白色三步引导向导（运行时 → 容器 → 启动）访问
+  `http://127.0.0.1:3080`；外部链接交给系统浏览器，仅引擎同源页面留在 WebView 内。
+- **保活** — 前台服务（`dataSync` 类型，带常驻通知）+ 5s 看门狗，引擎进程死亡
+  自动重启。引擎生命周期归服务所有（Activity 从不杀引擎）。
 - **运行时在线更新** — HTTPS manifest 驱动的快照替换（下载 → SHA-256 校验 →
   暂存解压 → 原子切换带回滚 → 看门狗自动重启）；运行中的运行时可自我更新，
   无需升级 APK。
-- **通用执行层** — 内置 `libexec-hook.so`（LD_PRELOAD）把引擎进程树中的一切
-  ELF 执行重路由到 `/system/bin/linker64`（Android 各版本/厂商一致允许的
+- **通用执行层** — 内置 `libexec-hook.so`（LD_PRELOAD）把引擎进程树中**同架构**
+  的 ELF 执行重路由到 `/system/bin/linker64`（Android 各版本/厂商一致允许的
   native 库加载机制），覆盖 Android 15+ exec 禁令、华为/EMUI W^X 等场景。
   主进程采用 direct exec → linker64 回退；解压出的可执行文件剥离写位
-  （rwx→r-x）满足 W^X。
-- **SAF 目录桥** — `pickDirectory` 把用户选择的目录映射为 bash 可直接访问的
-  真实路径（`/storage/emulated/0/…`）。
+  （rwx→r-x）满足 W^X。内置 `libunwind-patch.so` 补足 `_Unwind_Resume`，
+  使 node-pty 可加载。
+- **SAF 目录桥** — `pickDirectory` 把用户选择的目录映射为容器 bash 可直接访问的
+  真实路径。
 - **公共用户数据** — 设置、会话、存储、附件落在 `/storage/emulated/0/Documents/dshdata`
   （文件管理器可见、可备份、卸载重装不丢；API key 留在私有域）。
 
@@ -30,44 +36,80 @@
 
 | 组件 | 文件 | 职责 |
 |---|---|---|
-| `MainActivity` | `app/src/main/java/com/dshmobile/shell/MainActivity.kt` | WebView 壳、JS 桥接线、引擎优先启动流程、应用内下载、目录选择、通知 |
+| `MainActivity` | `app/src/main/java/com/dshmobile/shell/MainActivity.kt` | 编排：首次同意、启动流程、引擎启动、导出、更新触发 |
+| `GuideWizard` | `.../GuideWizard.kt` | 白色向导 UI：同意卡、三步流程、状态卡、冷启动顶部条（呼吸点） |
+| `HarnessWebView` | `.../HarnessWebView.kt` | WebView 配置、引擎源导航门、兼容层注入、按需重载策略 |
 | `AndroidBridge` | `.../AndroidBridge.kt` | `window.androidBridge` JS 接口（协议 v1） |
-| `EngineManager` | `.../EngineManager.kt` | 快照解压、dshdata 迁移/重连、引擎进程生命周期与环境注入 |
-| `EngineService` | `.../EngineService.kt` | 前台服务：保活 + 5s 看门狗 |
+| `PickerBridge` | `.../PickerBridge.kt` | SAF 目录/文件选择；待决回调跨 Activity 重建保留 |
+| `ExportFlow` | `.../ExportFlow.kt` | 应用内下载到 MediaStore Downloads（不跟随重定向） |
+| `NotificationHelper` | `.../NotificationHelper.kt` | 通知通道 + 测试通知 |
+| `EngineManager` | `.../EngineManager.kt` | 快照解压、dshdata 迁移/重连、引擎进程环境与生命周期 |
+| `EngineService` | `.../EngineService.kt` | 前台服务：拥有引擎生命周期 + 5s 看门狗 |
 | `EngineProbe` | `.../EngineProbe.kt` | 对 `127.0.0.1:3080` 的 HTTP 可达性探测 |
-| `SnapshotExtractor` | `.../SnapshotExtractor.kt` | xz-tar 解压（路径穿越防护 + Android exec 属性打标） |
-| `UpdateManager` | `.../UpdateManager.kt` | 运行时快照下载/校验/切换 |
+| `EngineSource` | `.../EngineSource.kt` | 引擎源 URL / 会话导出匹配 |
+| `ProotRuntime` | `.../ProotRuntime.kt` | proot + libtalloc + libandroid-shmem 资产、bash 包装生成、环境注入 |
+| `RootfsDownloader` | `.../RootfsDownloader.kt` | Ubuntu rootfs 下载、SHA-256 校验、暂存原子安装 |
+| `ContainerProbe` | `.../ContainerProbe.kt` | 容器冒烟测试（node → 包装 → proot → 容器 bash） |
+| `SnapshotExtractor` | `.../SnapshotExtractor.kt` | xz-tar 解压：穿越防护、符号/硬链接、W^X 剥离写位、exec 属性打标 |
+| `UnwindResolver` | `.../UnwindResolver.kt` | `_Unwind_Resume` 提供库解析 + pty.node 加载诊断 |
+| `UpdateManager` | `.../UpdateManager.kt` | 运行时快照下载/校验/切换（单飞、唯一暂存名） |
+| `Downloader` | `.../Downloader.kt` | 公共 HTTP 下载 + SHA-256 |
+| `DshPaths` | `.../DshPaths.kt` | 应用相对路径集中注册表（无硬编码包路径） |
 | `ShizukuSupport` | `.../ShizukuSupport.kt` | 可选 Shizuku 存在性/状态检测（保活增强） |
 
-### 引擎优先启动流程（`MainActivity.startEngineFlow`）
+### 首次启动流程（`MainActivity.onCreate`）
 
-1. 探测 `127.0.0.1:3080`；已在运行（Termux 或上次内嵌引擎）则直接显示 WebView。
-2. 否则首次启动时解压内嵌快照（`filesDir/usr`），再启动引擎：
-   `node --expose-internals <usr>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080`。
-3. 轮询探测最多 30s；成功后拉起前台服务与可选 Shizuku 保活增强。
-4. 任一失败回落到引导页（状态 + 重试 + Termux + 更新按钮）。
+1. **同意门** — 全新安装首次打开时展示同意卡（存储 ≈600MB：~79MB APK + ~484MB
+   运行时 + ~35MB 容器；耗时 2-5 分钟；相关须知）。未点"同意并开始"前不安装
+   任何东西；"退出应用"停留在页面（仅显式点击才 finish）。同意记录在
+   `SharedPreferences`，覆盖升级不重复打扰。
+2. **第 1 步 — 运行时**：解压内嵌快照到 `filesDir/usr`（显示进度），然后
+3. **第 2 步 — 容器**（强制）：缺失时下载 Ubuntu rootfs（对 `SHA256SUMS` 校验），
+   安装 proot + libtalloc + libandroid-shmem，生成 `usr/bin/bash` 包装，并对
+   整条链路做容器内冒烟测试（`echo CONTAINER_OK; id`）。容器失败 = 引擎启动失败。
+4. **第 3 步 — 启动**：用户按"启动引擎"；启动
+   `node --expose-internals <usr>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080`，
+   轮询探测最多 60s。
+5. **快速路径** — 快照与容器都已就绪时，应用冷启动直接进入 Harness，上方覆盖
+   细状态条（呼吸点，引擎应答后 6s 淡出）。
 
-流程受 in-flight CAS 标志保护：`onCreate` 与 `onResume` 都会触发本流程，
-双线程并发解压/启动会杀死引擎进程。
+流程受 in-flight CAS 标志保护（`onCreate` 与 `onResume` 都会触发；双线程并发
+解压/启动会杀死引擎进程）。
 
-### 引擎生命周期（`EngineManager`）
+### 引擎生命周期（归 `EngineService`）
 
-- 进程级 `STARTING` CAS + 90s 冷却窗口防止双启动（冷启动 node 需 20–45s；
-  更快的看门狗会与健康的启动过程竞争并产生 `EADDRINUSE`）。
-- 跟踪的引擎进程已死时立即清除冷却——5s 看门狗可在崩溃后立刻重启。
-- `startEngine` 启动前断言 termux-exec `LD_PRELOAD` 库存在（缺失会使所有
-  子进程 exec 静默失败）。
-- 直接 exec 被拒（`Permission denied`，Android 15+）时改经
-  `/system/bin/linker64` 拉起进程。
+- 前台服务启动后看门狗**必定武装**（每 5s 轮询；探测失败且快照就绪则重启引擎）。
+  任务体全程 try/catch——一次异常不会让看门狗永久停摆。
+- 进程级 `STARTING` CAS + 90s 冷却窗口防止双启动（冷启动 node 需 20–45s）。
+  进程已死立即清冷却；冷却过期仍存活视为挂死，先杀再起（否则旧进程占着端口，
+  每次新启动都以 `EADDRINUSE` 死亡，形成死循环）。
+- `MainActivity.onDestroy` 从不杀引擎——退出后台不得毁掉健康进程再让看门狗
+  冷启动一遍；引擎只在服务自身停止时被停止。
+- 直接 exec 被拒（`Permission denied`，Android 15+）时改经 `/system/bin/linker64`
+  拉起进程。
+- pick token（`DSH_PICK_TOKEN`）为进程级单例：看门狗重启的引擎与 WebView 桥
+  持有同一 token。
+
+### 容器集成
+
+- 集成点：agent 的 `dsh-bash-local` 从 `PATH` 解析 `bash`；`usr/bin/bash` 是
+  运行时生成的 shebang 包装（路由进 proot），原 bash 保留为 `bash.termux`。
+- 包装注入 `LD_LIBRARY_PATH`（proot 的 libtalloc/libandroid-shmem）、
+  `PROOT_TMP_DIR`（proot 需要可写临时目录；Termux 默认路径不可访问）与
+  `TMPDIR`（容器内临时目录）。
+- `ContainerProbe` 以受限 30s 超时跑完整 agent 链路（node → 包装 → proot →
+  容器 bash）；失败 = 引擎启动失败。
 
 ### 存储布局
 
 | 路径 | 用途 |
 |---|---|
 | `filesDir/usr` | 解压后的运行时快照（node、bash、coreutils、dsh、插件） |
+| `filesDir/rootfs` | Ubuntu 24.04 容器 rootfs（原子切换经 `rootfs-staging`/`rootfs-old`） |
 | `filesDir/home` | 引擎 `HOME`；`filesDir/home/.dsh` 即 `DSH_HOME`（私有，存放 `.credentials.yaml`） |
 | `filesDir/engine.log` | 引擎 stdout/stderr（合并重定向） |
-| `filesDir/update.tar.xz`、`update-stage`、`usr-old` | 运行时更新的暂存/回滚目录 |
+| `filesDir/update-<uuid>.tar.xz`、`update-stage-<uuid>`、`usr-old` | 运行时更新暂存/回滚（唯一命名，总是清理） |
+| `filesDir/libexec-hook.so`、`unwind` 资产 | exec 重路由钩子 + `_Unwind_Resume` 补丁库 |
 | `/storage/emulated/0/Documents/dshdata` | 用户数据：`settings.yaml`、`sessions/`、`storages/`、`attachments/`、`profiles/{web,headless}/` |
 
 用户数据按数据项从私有 `DSH_HOME` 迁往公共目录（issue apk#8 的约束）：
@@ -83,12 +125,12 @@ credentials-local 权限校验会拒绝加载，且 key 会暴露给其他应用
 |---|---|---|
 | `version` | getter → string | 桥协议版本（`"1.0"`），feature-detect 用 |
 | `checkEngine` | () → string | 探测 127.0.0.1:3080；JSON `{running, latencyMs, error?}` |
-| `keepScreenOn` | (enable: boolean) | 屏幕常亮（单个共享 wakelock 实例） |
+| `keepScreenOn` | (enable: boolean) | 屏幕常亮（单个共享 wakelock；Activity 销毁时释放） |
 | `showNotification` | (title, text) | 测试通知通道（POST_NOTIFICATIONS 运行时请求；授权后补发排队通知） |
 | `pickDirectory` | (callbackId: string) | SAF 目录选择（ACTION_OPEN_DOCUMENT_TREE）；结果异步回传 |
 | `hasAllFilesAccess` | () → boolean | 是否持有 All Files Access（API 30+） |
 | `requestAllFilesAccess` | () → void | 打开系统 All Files Access 授权页 |
-| `getPickToken` | () → string/null | 目录选择端点的一次性会话 token |
+| `getPickToken` | () → string/null | 目录选择端点的进程级会话 token（引擎重启后保持稳定） |
 
 异步结果回传页面：
 
@@ -104,19 +146,20 @@ credentials-local 权限校验会拒绝加载，且 key 会暴露给其他应用
 
 ### 目录选择与 All Files Access
 
-外部工作区要求 bash 进程能直接访问所选真实路径：引擎 env 携带
+外部工作区要求容器 bash 能直接访问所选真实路径：引擎 env 携带
 `DSH_PICK_TOKEN`，web-compat 插件以 `x-dsh-pick-token` 校验。API 30+ 且未
 授予 All Files Access 时，应用打开系统授权页并回调 `onPermissionRequired`；
-API < 30 时选择以取消结算（无该权限模型）。
+API < 30 时选择以取消结算（无该权限模型，外部工作区不可用）。`primary` 卷
+映射为运行时推导的外部存储路径（无硬编码 `/storage/emulated/0`）。
 
 ### 会话日志导出与下载
 
 引擎同源下载（`/api/session.export` 及 127.0.0.1:3080 的一切）由应用内
-`HttpURLConnection` 执行，流式写入 MediaStore Downloads（API 29+，免权限），
-上限 200MB。原因：浏览器导航携带 `Origin: null` / `sec-fetch-site` 标记，
-会被 dsh 的 `/api` browser-trust fence 拒绝（403）；应用内连接无浏览器
-标记，可放行。两个入口（`shouldOverrideUrlLoading` + 下载监听）经 in-flight
-守卫去重。
+`HttpURLConnection` 执行（不跟随重定向——重定向目标不可信），流式写入
+MediaStore Downloads（API 29+，免权限），上限 200MB。原因：浏览器导航携带
+`Origin: null` / `sec-fetch-site` 标记，会被 dsh 的 `/api` browser-trust
+fence 拒绝（403）；应用内连接无浏览器标记，可放行。两个入口
+（`shouldOverrideUrlLoading` + 下载监听）经 in-flight 守卫去重。
 
 ### WebView 安全边界
 
@@ -124,6 +167,10 @@ API < 30 时选择以取消结算（无该权限模型）。
   浏览器，不可信页面永远无法触达特权桥。
 - 会话导出路径精确匹配（`/api/session.export`），非前缀匹配。
 - `allowFileAccess=false`、禁止混合内容、`FORCE_DARK_AUTO` 跟随系统主题。
+- 页面仅在之前加载失败（引擎未就绪时的错误页）时重载；健康页面回到前台
+  保留状态。
+- 旧 WebView 上注入 JS 兼容层（`assets/js/compat-polyfills.js`：AbortSignal.any、
+  Promise.any、structuredClone、groupBy 等，全部 feature-detect）。
 - `network_security_config.xml` 仅对 `127.0.0.1`/`localhost` 放行明文，
   其余必须 TLS。
 
@@ -132,9 +179,11 @@ API < 30 时选择以取消结算（无该权限模型）。
 1. 应用以 **HTTPS** 拉取 `manifest.json`：`{url, sha256, size}`。manifest 与
    快照 URL 均强制 HTTPS；缺少 `sha256` 直接拒绝更新（否则无完整性保护）。
 2. 快照流式下载（上限 500MB），与 manifest 的 SHA-256 比对。
-3. 解压到暂存目录（绝不触碰运行中的目录树），校验新 `usr`（必须含
-   `bin/node`）后切换：`usr → usr-old → new usr`，切换失败自动回滚。
-4. 杀死旧引擎进程；EngineService 看门狗数秒内从新运行时重启引擎。
+3. 解压到**唯一**暂存目录（`update-stage-<uuid>`，绝不触碰运行中的目录树；
+   并发运行单飞互斥），校验新 `usr`（必须含 `bin/node`）后切换：
+   `usr → usr-old → new usr`，切换失败自动回滚。暂存与压缩包总是清理。
+4. 杀死旧引擎进程（`pkill -f bin.js`）；杀死失败时提示用户重启应用（看门狗
+   只重启已死的引擎）。否则 EngineService 看门狗数秒内从新运行时重启引擎。
 
 测试触发：`adb shell am start -n com.dshmobile.shell/.MainActivity -a com.dshmobile.shell.action.UPDATE`
 （仅 debug 构建有效——activity 因 LAUNCHER 是 exported，release 忽略该
@@ -147,9 +196,8 @@ intent，防止外部应用触发下载+执行链路）。状态写入 `files/up
 环境要求：JDK 17+、Android SDK（compileSdk 36）、Gradle 9.7.0（wrapper）。
 
 ```sh
-# 1. 准备运行时快照（必需，~70MB，作为 Release 资源分发）
-#    方式 A：从 GitHub Releases 下载 snapshot-x86_64.tar.xz
-#    方式 B：在 Termux 设备上自打（scripts/make-snapshot.sh）后拉取
+# 1. 准备运行时快照（必需，作为 CI 资产分发）
+#    release workflow 从上游 Releases 下载 snapshot-arm64/x86_64.tar.xz 打进 assets/
 mkdir -p app/src/main/assets
 cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
 
@@ -158,17 +206,27 @@ cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
 # 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Release 构建（CI）额外传入：
+
+```sh
+./gradlew assembleRelease \
+  -PversionName=0.1.0 -PversionCode=100 \   # 由发布 tag 推导
+  -PabiFilter=arm64-v8a                      # 每个矩阵腿只编一个 ABI
+```
+
 构建配置：AGP 9.3.1、Kotlin 2.4.10、minSdk 26、targetSdk 34（Android 15+
 的 app-data ELF exec 限制由 linker64 回退兜底）。解压器会去除可执行文件的
 写权限（W^X：华为/EMUI 拒绝执行可写文件）。`snapshot.tar.xz` 排除资源压缩
-（`noCompress += "xz"`）；lint 对离线环境不阻断。
+（`noCompress += "xz"`）；lint 对离线环境不阻断。**签名 keystore 只存在于
+仓库 secret `RELEASE_KEYSTORE_B64`**——workflow 缺失即拒绝构建（绝不发布或
+现生成密钥）。
 
 ## 权限
 
 | 权限 | 用途 |
 |---|---|
-| `INTERNET` | WebView + 引擎探测 |
-| `MANAGE_EXTERNAL_STORAGE` | 外部工作区：bash 访问用户选择的目录（All Files Access，运行时请求） |
+| `INTERNET` | WebView + 引擎探测 + rootfs/更新下载 |
+| `MANAGE_EXTERNAL_STORAGE` | 外部工作区：容器 bash 访问用户选择的目录。Android 11+ 安装即授权（All Files Access）；Android 10 及以下无此模型，外部工作区不可用 |
 | `POST_NOTIFICATIONS` | 通知通道（API 33+ 运行时请求） |
 | `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` | 保活服务（`dataSync` 类型） |
 
@@ -191,7 +249,10 @@ ABI 匹配的 APK——装错架构的包解压正常，但引擎无法执行。
   仅报告状态（appops-application 步骤需要 shell-exec API，已推迟）。
 - 目录选择仅把 `primary` 卷映射为真实路径；其他卷回退为不透明的
   `content://` tree URI。
-- 引擎切换后由看门狗下轮探测重启（切换后最多 ~5s）。
+- 引擎切换后由看门狗下轮探测重启（切换后最多 ~5s），且仅当旧进程被杀成功；
+  杀失败时提示重启应用。
+- Ubuntu 容器首次运行需要网络（cdimage.ubuntu.com 约 35MB）；校验和获取失败
+  时拒绝安装（绝不装未校验的 rootfs）。
 
 ## 相关项目
 

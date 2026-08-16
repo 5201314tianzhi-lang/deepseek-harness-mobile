@@ -1,5 +1,9 @@
 # Proot Ubuntu Container Implementation Plan
 
+> **STATUS: IMPLEMENTED (2026-08-16).** This plan was executed; the code has
+> since evolved beyond it (consent gate, lifecycle ownership, hardening).
+> See docs/design.md for the current architecture.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give the agent a standard Ubuntu 24.04 environment inside a user-space proot container, installed on demand, with agent bash commands automatically routed into it.

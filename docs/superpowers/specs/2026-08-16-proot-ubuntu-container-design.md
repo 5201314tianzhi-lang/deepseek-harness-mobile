@@ -1,7 +1,11 @@
 # Proot Ubuntu Container — Design
 
 Date: 2026-08-16
-Status: Implemented (pending on-device acceptance)
+Status: Implemented (2026-08-16; CI green, on-device acceptance tracked in
+        docs/verification/container-acceptance.md)
+        Superseded in parts by the 2026-08-16 hardening pass: first-run
+        consent gate, engine lifecycle owned by EngineService, process-level
+        pickToken, atomic rootfs swap — see docs/design.md (v3.0).
 
 ## 1. Background
 

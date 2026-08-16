@@ -151,3 +151,97 @@ P3 收尾组
 **问题**：catch 分支未 `disconnect()`。
 
 **修复**：finally 释放。
+
+### I-14 签名密钥公开发布 + 密码硬编码 🟩（2026-08-16 全面审查修复）
+
+**位置**：`.github/workflows/release.yml:96-117`（旧）
+
+**问题**：keystore 缺失时回退到公开 Release asset 下载，再不行就 keytool 现生成并 `--clobber` 上传为公开资产，密码写死 `android`——任何人可拿到真签名伪造同签名更新包覆盖安装（继承 MANAGE_EXTERNAL_STORAGE 全盘权限）；双矩阵腿并发时各自生成不同密钥互相覆盖，arm64/x86_64 产物签名不一致。
+
+**修复**：密钥只从 secret `RELEASE_KEYSTORE_B64` 读取并校验，缺失即 exit 1；删除 asset 回退与生成分支。
+
+### I-15 引擎生命周期三方无仲裁（主线程探测/退出即杀/看门狗死锁）🟩
+
+**位置**：`EngineService.kt` / `MainActivity.kt:185-188`
+
+**问题**：
+- `onStartCommand` 主线程跑 `EngineProbe.check()`（HTTP I/O）→ NetworkOnMainThreadException 被吞 → 守卫恒失效 → 真实双启动（90s 冷却过期后 EADDRINUSE）；
+- `MainActivity.onDestroy` 无条件 stopEngine 杀掉健康引擎，5s 后看门狗又冷启动拉回（退出即杀、再必然拉起）；
+- 看门狗 `scheduleWithFixedDelay` 任务体无 try/catch：一次异常 = 调度被静默抑制 = 引擎永远无人重启。
+
+**修复**：ensureEngine 移后台线程；看门狗总 arm（无论引擎是否在跑）+ 任务体全 try/catch；引擎生命周期归 EngineService 唯一 owner，Activity 不杀引擎。
+
+### I-16 pickToken 生命周期失配 → 目录选择静默失效 🟩
+
+**位置**：`EngineManager.kt` / `EngineService.kt:27`
+
+**问题**：token 是 Activity 实例随机值；引擎被服务（无 token 的 EngineManager）重启后 `DSH_PICK_TOKEN=""` 与 WebView 桥 token 失配 → 划掉任务重开后 pick 目录功能坏掉且永不重启（probe 显示 running）。
+
+**修复**：token 提升为 EngineManager companion 进程级单例，所有实例（含服务）读取同一值。
+
+### I-17 更新流程无单飞 + 固定路径并发交换 🟩
+
+**位置**：`UpdateManager.kt`
+
+**问题**：两个入口（按钮 + ACTION_UPDATE）共用固定 `update.tar.xz`/`update-stage` 且无 CAS：交错时序可删掉对方正在写入的 stage，把空心目录 rename 进活树；`pkill` 失败被吞（引擎继续跑旧 inode 且永不重启）；失败路径残留 ~500MB tarball。
+
+**修复**：进程级 CAS 单飞 + UUID 唯一 tmp/stage 名 + finally 清理 + pkill 失败显式提示（新字符串 update_restart_hint）。
+
+### I-18 解压中断后永久卡死（悬空 symlink + r-x 覆盖）🟩
+
+**位置**：`SnapshotExtractor.kt`
+
+**问题**：
+- `target.exists()` 跟随 symlink：悬空链接不删除 → createSymbolicLink 抛异常 → 每次重试同样失败，唯一出路是清数据重装；
+- 覆盖已剥离写位的 r-x 文件 → `outputStream()` EACCES → 同样永久卡死。
+
+**修复**：改用 `Files.isSymbolicLink` 判断；开流前恢复写位（幂等可重入）；异常路径 finally 关流；硬链接条目物化复制（原实现写成 0 字节空文件）。
+
+### I-19 rootfs 校验可旁路 + 破坏性失败顺序 🟩
+
+**位置**：`RootfsDownloader.kt`
+
+**问题**：
+- `expectedChecksum` 的 catch-all 吞掉解析错/磁盘错 → 校验服务器不可达 = 裸装未校验 rootfs；
+- 先 `rootfs.deleteRecursively()` 再解压：中途失败即销毁上一版可用 rootfs，只剩半棵树；
+- `if (running) return false; running = true` 检查-赋值非原子。
+
+**修复**：checksum 硬性（want==null 即失败）；staging 目录解压 → rename 原子替换带 rollback（rootfs-staging/rootfs-old）；AtomicBoolean CAS。
+
+### I-20 WakeLock 永不释放 + JS 桥非主线程 launch 🟩
+
+**位置**：`MainActivity.kt:207-214` / `PickerBridge.kt`
+
+**问题**：`keepScreenOn(true)` 后锁被永久持有（onDestroy 不 release，前台服务保进程）→ 屏幕常亮电池耗尽；`@JavascriptInterface` 在 WebKit 线程直接调 `directoryPicker.launch()`（androidx 新版本必抛 IllegalStateException）。
+
+**修复**：onDestroy 无条件 release；所有 ActivityResultRegistry.launch 回主线程。
+
+### I-21 onResume 无条件 reload + 待决 pick 回调跨重建丢失 🟩
+
+**位置**：`HarnessWebView.kt` / `PickerBridge.kt` / `MainActivity.kt`
+
+**问题**：每次回前台整页 reload（会话 UI 全丢、与 pick 结果竞态）；Activity 重建（locale/低内存回收）后 `pendingPickCallback` 丢失，引擎侧 promise 永不 settle、页面反复重开选择器。
+
+**修复**：`loadFailed` 标志——仅错误页时 reload；pending callback 随 onSaveInstanceState 保存/恢复。
+
+### I-22 exec-hook 重路由边界过宽 🟩
+
+**位置**：`app/src/main/cpp/exec-hook.c`
+
+**问题**：is_elf 只查 4 字节 magic——静态 ELF/跨架构 ELF 被误路由（linker 加载失败且不回落原生）；前缀比较误伤 `/system/bin/linker64-*`；FIFO open 可能挂死 exec 链；`argv==NULL` 段错误。
+
+**修复**：e_machine 与构建 ABI 校验；重路由任何失败回落原生；精确 strcmp；O_NONBLOCK；argv NULL 按空 argv 处理。
+
+### I-23 双 ABI 矩阵无效 + 版本元数据静态 🟩
+
+**位置**：`release.yml` / `app/build.gradle.kts`
+
+**问题**：gradle 无 abiFilters，两腿产出同一通用 APK 仅后缀不同（32 位 ABI 混入且 hook 硬编码 linker64）；versionCode 恒 1——发布 v0.2.0 用户无升级感知。
+
+**修复**：`-PabiFilter` 每腿单 ABI；`-PversionName/-PversionCode` 由 tag 推导（v0.1.0 → 100）；ShizukuProvider 声明补齐；curl -f；update_release 允许重发。
+
+### I-24 JS 桥/UI 余项 🟩（部分修复）
+
+**位置**：`GuideWizard.kt` / `AndroidBridge.kt` / `ExportFlow.kt` / `MainActivity.kt` / `compat-polyfills.js`
+
+**修复**：检查更新回调回主线程；导出下载禁跟随重定向；顶部条失败路径清理（hideTopBar 公开 + 失败统一 showGuide）；冷启动顶部条 6s 后淡出（呼吸动画可被看见）；Object.groupBy null 原型累加器（`__proto__` 键原型污染）；structuredClone 支持 DataView；AbortSignal.any 透传 reason；子进程探测 30s 受限等待；更新/解压/根目录轮询 60s。
