@@ -35,7 +35,17 @@ class UpdateManager(private val context: Context) {
    * @param onStatus progress text callback (any thread).
    */
   fun checkAndApply(onStatus: (String) -> Unit) {
+    // Single-flight: two concurrent runs (guide button + debug ACTION_UPDATE)
+    // used to share fixed tmp/stage paths and could tear each other's staging
+    // directory apart mid-extract, swapping a hollow tree into the live usr.
+    if (!UPDATE_IN_FLIGHT.compareAndSet(false, true)) {
+      onStatus(context.getString(R.string.update_in_progress))
+      return
+    }
     Thread {
+      val uuid = java.util.UUID.randomUUID().toString()
+      val tmp = File(context.filesDir, "update-" + uuid + ".tar.xz")
+      val stage = File(context.filesDir, "update-stage-" + uuid)
       try {
         onStatus(context.getString(R.string.update_checking))
         val manifestUrl = this.manifestUrl
@@ -49,24 +59,19 @@ class UpdateManager(private val context: Context) {
         if (expectedSha.isEmpty()) throw IllegalStateException(context.getString(R.string.err_manifest_no_sha))
 
         onStatus(context.getString(R.string.update_downloading, manifest.optLong("size", 0) / 1024 / 1024))
-        val tmp = File(context.filesDir, "update.tar.xz")
         download(url, tmp)
 
         onStatus(context.getString(R.string.update_verifying))
         val actual = sha256(tmp)
         if (!actual.equals(expectedSha, ignoreCase = true)) {
-          tmp.delete()
           throw IllegalStateException(context.getString(R.string.err_sha_mismatch, actual.take(12) + "…"))
         }
 
         onStatus(context.getString(R.string.update_extracting))
         // The archive holds a usr/ prefix; stage it OUTSIDE the live tree.
-        val stage = File(context.filesDir, "update-stage")
-        deleteRecursively(stage)
         SnapshotExtractor.extract(
           tmp.inputStream(), manifest.optLong("size", 0), stage, { _, _ -> },
         )
-        tmp.delete()
         val newUsr = File(stage, "usr")
         if (!File(newUsr, "bin/node").exists()) throw IllegalStateException(context.getString(R.string.err_new_snapshot_no_node))
 
@@ -88,52 +93,87 @@ class UpdateManager(private val context: Context) {
           }
           throw IllegalStateException(context.getString(R.string.err_switch_failed_rolled_back))
         }
-        deleteRecursively(stage)
-        deleteRecursively(old)
 
         // Kill the old engine process: the EngineService watchdog restarts
-        // it from the NEW usr within seconds.
-        try {
-          Runtime.getRuntime().exec(arrayOf("/system/bin/pkill", "-f", "bin.js")).waitFor()
-        } catch (_: Throwable) {
+        // it from the NEW usr within seconds. The process keeps running on
+        // the OLD tree's inodes after the swap, so a missed kill means the
+        // running engine silently stays on the previous snapshot — surface
+        // it instead of swallowing it.
+        val killed = try {
+          val p = Runtime.getRuntime().exec(arrayOf("/system/bin/pkill", "-f", "bin.js"))
+          val rc = p.waitFor()
+          if (rc == 0) {
+            AppLog.log("update", "old engine killed")
+            true
+          } else {
+            AppLog.log("update", "pkill exit=" + rc + " (no engine matched, nothing to kill)")
+            true
+          }
+        } catch (t: Throwable) {
+          AppLog.log("update", "pkill unavailable", t)
+          false
         }
-        onStatus(context.getString(R.string.update_done))
+        onStatus(
+          context.getString(R.string.update_done) +
+            if (killed) "" else " " + context.getString(R.string.update_restart_hint),
+        )
       } catch (t: Throwable) {
         AppLog.log("update", "update FAILED", t)
         onStatus(context.getString(R.string.update_failed, t.message ?: t.javaClass.simpleName))
+      } finally {
+        // Unique tmp/stage are always cleaned: a failed run must not leave a
+        // ~500MB tarball or a half-extracted stage behind (and reuse of a
+        // stale fixed name would corrupt the next run).
+        try {
+          tmp.delete()
+        } catch (_: Throwable) {
+        }
+        try {
+          deleteRecursively(stage)
+        } catch (_: Throwable) {
+        }
+        UPDATE_IN_FLIGHT.set(false)
       }
     }.start()
   }
 
   private fun fetch(url: String): String {
     val conn = URL(url).openConnection() as HttpURLConnection
-    conn.connectTimeout = 10_000
-    conn.readTimeout = 30_000
-    val code = conn.responseCode
-    if (code != 200) throw IllegalStateException(context.getString(R.string.err_manifest_http, code))
-    return conn.inputStream.bufferedReader().use { it.readText() }
+    try {
+      conn.connectTimeout = 10_000
+      conn.readTimeout = 30_000
+      val code = conn.responseCode
+      if (code != 200) throw IllegalStateException(context.getString(R.string.err_manifest_http, code))
+      return conn.inputStream.bufferedReader().use { it.readText() }
+    } finally {
+      conn.disconnect()
+    }
   }
 
   private fun download(url: String, dest: File) {
     val conn = URL(url).openConnection() as HttpURLConnection
-    conn.connectTimeout = 10_000
-    conn.readTimeout = 60_000
-    val code = conn.responseCode
-    if (code != 200) throw IllegalStateException(context.getString(R.string.err_download_http, code))
-    conn.inputStream.use { input ->
-      dest.outputStream().use { out ->
-        // Stream with a total-size cap (I-09): a manifest can point at a huge
-        // file, so without a limit the download could fill the storage.
-        val buf = ByteArray(64 * 1024)
-        var total = 0L
-        while (true) {
-          val n = input.read(buf)
-          if (n < 0) break
-          total += n
-          if (total > MAX_SNAPSHOT_BYTES) throw IllegalStateException(context.getString(R.string.err_snapshot_too_large))
-          out.write(buf, 0, n)
+    try {
+      conn.connectTimeout = 10_000
+      conn.readTimeout = 60_000
+      val code = conn.responseCode
+      if (code != 200) throw IllegalStateException(context.getString(R.string.err_download_http, code))
+      conn.inputStream.use { input ->
+        dest.outputStream().use { out ->
+          // Stream with a total-size cap (I-09): a manifest can point at a huge
+          // file, so without a limit the download could fill the storage.
+          val buf = ByteArray(64 * 1024)
+          var total = 0L
+          while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            total += n
+            if (total > MAX_SNAPSHOT_BYTES) throw IllegalStateException(context.getString(R.string.err_snapshot_too_large))
+            out.write(buf, 0, n)
+          }
         }
       }
+    } finally {
+      conn.disconnect()
     }
   }
 
@@ -162,5 +202,8 @@ class UpdateManager(private val context: Context) {
     /** Total-size cap for snapshot downloads: the bundled snapshot is ~70MB,
      *  500MB leaves ample headroom while preventing storage exhaustion (I-09). */
     const val MAX_SNAPSHOT_BYTES = 500L * 1024 * 1024
+
+    /** Process-level single-flight guard (both update entry points share it). */
+    private val UPDATE_IN_FLIGHT = java.util.concurrent.atomic.AtomicBoolean(false)
   }
 }

@@ -19,14 +19,15 @@ object RootfsDownloader {
   private const val TARBALL_PREFIX = "ubuntu-base-24.04.3-base-"
   private const val CHECKSUM_URL = BASE_URL + "SHA256SUMS"
 
-  @Volatile private var running = false
+  /** Atomic single-flight guard: check-then-set on a volatile bool races. */
+  private val RUNNING = java.util.concurrent.atomic.AtomicBoolean(false)
 
-  fun isInstalling(): Boolean = running
+  fun isInstalling(): Boolean = RUNNING.get()
 
   fun state(context: Context): String {
     val rootfs = File(context.filesDir, DshPaths.ROOTFS_DIR)
     return when {
-      running -> "downloading"
+      RUNNING.get() -> "downloading"
       File(rootfs, ".ready").isFile -> "ready"
       rootfs.exists() -> "failed"
       else -> "missing"
@@ -43,8 +44,7 @@ object RootfsDownloader {
   }
 
   fun install(context: Context): Boolean {
-    if (running) return false
-    running = true
+    if (!RUNNING.compareAndSet(false, true)) return false
     return try {
       val arch = abi(context) ?: return false
       val tarballName = TARBALL_PREFIX + arch + ".tar.gz"
@@ -54,24 +54,49 @@ object RootfsDownloader {
       AppLog.log("rootfs", "downloading " + BASE_URL + tarballName)
       Downloader.downloadToFile(BASE_URL + tarballName, tmp)
 
+      // Checksum is mandatory, not advisory: the catch-all in expectedChecksum
+      // previously swallowed disk/parse errors too and skipped verification
+      // whenever the checksum fetch hiccupped — unverified rootfs would be
+      // installed from the wire. No checksum → no install.
       val want = expectedChecksum(context, tarballName)
-      if (want != null && !Downloader.sha256(tmp).equals(want, ignoreCase = true)) {
+      if (want == null) {
+        AppLog.log("rootfs", "checksum unavailable — refusing unverified rootfs install")
+        return false
+      }
+      if (!Downloader.sha256(tmp).equals(want, ignoreCase = true)) {
         AppLog.log("rootfs", "sha256 mismatch, expected " + want)
         return false
       }
 
-      rootfs.deleteRecursively()
-      rootfs.mkdirs()
-      extractTarGz(tmp, rootfs)
-      File(rootfs, ".ready").writeText(BASE_URL + tarballName)
+      // Stage outside the live root, then swap with rollback: an interrupted
+      // extraction must not destroy the previously working rootfs (the old
+      // code deleted rootfs before extracting, so a mid-way failure left a
+      // half-tree and forced a full re-download).
+      val stage = File(context.filesDir, "rootfs-staging")
+      stage.deleteRecursively()
+      stage.mkdirs()
+      extractTarGz(tmp, stage)
+      File(stage, ".ready").writeText(BASE_URL + tarballName)
+      val old = File(context.filesDir, "rootfs-old")
+      old.deleteRecursively()
+      if (rootfs.exists() && !rootfs.renameTo(old)) {
+        throw java.io.IOException("cannot move old rootfs aside")
+      }
+      if (!stage.renameTo(rootfs)) {
+        if (old.exists() && !old.renameTo(rootfs)) {
+          throw java.io.IOException("swap failed and rollback failed")
+        }
+        throw java.io.IOException("cannot move staged rootfs into place")
+      }
+      old.deleteRecursively()
       AppLog.log("rootfs", "rootfs installed at " + rootfs.absolutePath)
-      tmp.delete()
       true
     } catch (t: Throwable) {
       AppLog.log("rootfs", "install failed", t)
       false
     } finally {
-      running = false
+      tmp.delete()
+      RUNNING.set(false)
     }
   }
 
@@ -85,7 +110,7 @@ object RootfsDownloader {
           ?.substringBefore(' ')
       }
     } catch (t: Throwable) {
-      AppLog.log("rootfs", "checksum fetch failed, skipping verify", t)
+      AppLog.log("rootfs", "checksum fetch failed", t)
       null
     }
   }
@@ -95,8 +120,11 @@ object RootfsDownloader {
     // Android 10+ vendors (EACCES), and this path has no exec-hook protection.
     GzipCompressorInputStream(tarGz.inputStream().buffered()).use { gz ->
       val tar = TarArchiveInputStream(gz)
-      SnapshotExtractor.extractTar(tar, dest)
-      tar.close()
+      try {
+        SnapshotExtractor.extractTar(tar, dest)
+      } finally {
+        tar.close()
+      }
     }
   }
 }

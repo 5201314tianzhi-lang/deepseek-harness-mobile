@@ -30,8 +30,20 @@ object SnapshotExtractor {
   fun extract(input: InputStream, totalBytes: Long, dest: File, onProgress: (Long, Long) -> Unit) {
     val xz = XZCompressorInputStream(input)
     val tar = TarArchiveInputStream(xz)
-    extractTar(tar, dest) { done -> onProgress(done, totalBytes) }
-    tar.close()
+    try {
+      extractTar(tar, dest) { done -> onProgress(done, totalBytes) }
+    } finally {
+      // Any extraction error (traversal violation, EACCES, IO) must still
+      // release the streams; close is idempotent for callers that use {} too.
+      try {
+        tar.close()
+      } catch (_: Exception) {
+      }
+      try {
+        input.close()
+      } catch (_: Exception) {
+      }
+    }
   }
 
   /**
@@ -56,11 +68,38 @@ object SnapshotExtractor {
         entry.isDirectory -> target.mkdirs()
         entry.isSymbolicLink -> {
           target.parentFile?.mkdirs()
-          if (target.exists()) target.delete()
+          // isSymbolicLink first: exists() follows the link, and a dangling
+          // symlink (from an interrupted earlier run) would report false and
+          // leave the stale entry for createSymbolicLink to explode on —
+          // every retry then fails identically with no recovery path.
+          if (java.nio.file.Files.isSymbolicLink(target.toPath()) || target.exists()) target.delete()
           java.nio.file.Files.createSymbolicLink(target.toPath(), java.nio.file.Paths.get(entry.linkName))
+        }
+        entry.isLink -> {
+          // Hard links carry no payload (size 0): materialize a full copy of
+          // the link target instead of writing an empty file.
+          target.parentFile?.mkdirs()
+          if (java.nio.file.Files.isSymbolicLink(target.toPath()) || target.exists()) target.delete()
+          val linkTarget = resolveTarget(dest, destCanonical, entry.linkName)
+          if (linkTarget.isFile) {
+            linkTarget.copyTo(target, overwrite = true)
+            target.setExecutable(linkTarget.canExecute(), true)
+            if (target.canWrite()) target.setWritable(false, false)
+            if (target.name.endsWith(".so") || target.name.endsWith(".node")) {
+              if (target.canWrite()) target.setWritable(false, false)
+            }
+          } else {
+            AppLog.log("extract", "hard link target missing, skipping: " + entry.name)
+          }
         }
         else -> {
           target.parentFile?.mkdirs()
+          // Idempotent overwrite: an existing target may have had its write
+          // bit stripped by W^X (reinstall-without-clear, or an interrupted
+          // previous run) — restore it before opening the stream, otherwise
+          // the overwrite fails with EACCES and every retry fails the same
+          // way (permanent "extract failed" with no recovery).
+          if (target.exists()) target.setWritable(true, true)
           target.outputStream().use { out ->
             val buf = ByteArray(64 * 1024)
             var n = tar.read(buf)

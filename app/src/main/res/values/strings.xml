@@ -92,4 +92,6 @@
   <string name="consent_note_3">• Future launches skip the setup and open your workspace directly.</string>
   <string name="consent_accept">Agree &amp; start</string>
   <string name="consent_exit">Exit</string>
+  <string name="update_in_progress">Update already running — wait for it to finish.</string>
+  <string name="update_restart_hint">Restart the app to apply the new runtime.</string>
 </resources>

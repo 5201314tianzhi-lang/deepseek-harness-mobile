@@ -94,4 +94,6 @@
   <string name="consent_note_3">• 后续打开无需重复安装，直接进入工作界面。</string>
   <string name="consent_accept">同意并开始</string>
   <string name="consent_exit">退出应用</string>
+  <string name="update_in_progress">更新已在运行，请等待完成。</string>
+  <string name="update_restart_hint">请重启应用以应用新运行时。</string>
 </resources>
