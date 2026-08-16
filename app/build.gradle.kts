@@ -118,4 +118,5 @@ dependencies {
   implementation("org.tukaani:xz:1.12")
   implementation("dev.rikka.shizuku:api:13.1.5")
   implementation("dev.rikka.shizuku:provider:13.1.5")
+  implementation("dev.rikka.shizuku:shizuku-user:13.1.5")
 }

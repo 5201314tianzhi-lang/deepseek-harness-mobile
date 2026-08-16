@@ -120,6 +120,7 @@ class MainActivity : ComponentActivity() {
       },
       onCopyLog = { copyLog() },
       onBackToHarness = { showWeb() },
+      onKeepAlive = { showKeepAlivePanel() },
     )
 
     val root = FrameLayout(this).apply {
@@ -434,13 +435,58 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** Start the foreground service (engine keep-alive + watchdog). */
+  /** Start the foreground service (engine keep-alive + watchdog) and arm the
+   *  heartbeat recovery alarm. */
   private fun startEngineService() {
+    KeepAliveAlarm.schedule(this)
     try {
       startForegroundService(Intent(this, EngineService::class.java))
     } catch (_: Exception) {
       // Foreground-service start limits: service will start on next launch.
     }
+  }
+
+  /** Keep-alive settings panel (battery-optimization exemption + Shizuku
+   *  appops boost + OEM autostart hint). */
+  private fun showKeepAlivePanel() {
+    val batteryLine = getString(
+      if (ShizukuSupport.isBatteryOptimizationIgnored(this)) R.string.keep_alive_battery_ignored
+      else R.string.keep_alive_battery_not_ignored,
+    )
+    val shizukuLine = ShizukuSupport.status(this)
+    val status = batteryLine + "\n" + shizukuLine + "\n" + getString(R.string.keep_alive_autostart_hint)
+    wizard.showKeepAlivePanel(
+      status,
+      onBattery = {
+        if (ShizukuSupport.isBatteryOptimizationIgnored(this)) {
+          wizard.updateKeepAliveStatus(status.replaceFirst(
+            getString(R.string.keep_alive_battery_not_ignored), getString(R.string.keep_alive_battery_ignored),
+          ))
+          return@showKeepAlivePanel
+        }
+        try {
+          startActivity(
+            Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+              .setData(android.net.Uri.parse("package:" + packageName)),
+          )
+        } catch (_: Exception) {
+          try {
+            startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+          } catch (_: Exception) {
+          }
+        }
+      },
+      onShizuku = {
+        ShizukuSupport.applyAppOpsBoost(this) { result ->
+          runOnUiThread {
+            wizard.updateKeepAliveStatus(
+              batteryLine + "\n" + getString(R.string.shizuku_boost) + result + "\n" +
+                getString(R.string.keep_alive_autostart_hint),
+            )
+          }
+        }
+      },
+    )
   }
 
   /** Best-effort Shizuku keep-alive boost; outcome logged only. */

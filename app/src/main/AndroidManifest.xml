@@ -8,6 +8,11 @@
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+  <!-- Keep-alive (L1): restart the service after boot / upgrade / power
+       reconnect / screen unlock. -->
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <!-- Keep-alive (L3): user-facing battery-optimization exemption prompt. -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
   <application
     android:label="@string/app_name"
@@ -19,6 +24,34 @@
       android:name=".EngineService"
       android:exported="false"
       android:foregroundServiceType="dataSync" />
+
+    <!-- Keep-alive (L4): Shizuku user service, runs as the shell identity to
+         apply the appops background exemptions. Must not be bindable by
+         other apps (INTERACT_ACROSS_USERS_FULL protects the binding). -->
+    <service
+      android:name=".KeepAliveUserService"
+      android:exported="false"
+      android:process=":keepalive"
+      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+    <!-- Keep-alive (L1): boot / upgrade / power / unlock re-raise the
+         foreground service (Android 12+ exempts these broadcasts from the
+         background-start restriction). -->
+    <receiver
+      android:name=".BootReceiver"
+      android:exported="false">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
+        <action android:name="android.intent.action.USER_PRESENT" />
+      </intent-filter>
+    </receiver>
+
+    <!-- Keep-alive (L2): heartbeat recovery alarm (self-re-arming). -->
+    <receiver
+      android:name=".KeepAliveAlarm"
+      android:exported="false" />
 
     <!-- Shizuku keep-alive bridge: must be declared and exported for the
          Shizuku service to deliver the binder (dev.rikka.shizuku:provider). -->

@@ -20,6 +20,7 @@ class GuideWizard(
   private val onCheckUpdate: (status: (String) -> Unit) -> Unit,
   private val onCopyLog: () -> Unit,
   private val onBackToHarness: () -> Unit,
+  private val onKeepAlive: () -> Unit,
 ) {
 
   val guideView: LinearLayout = buildGuideView()
@@ -37,6 +38,10 @@ class GuideWizard(
   private var consentBlock: LinearLayout? = null
   private var consentAccept: Button? = null
   private var consentExit: Button? = null
+  private var keepAliveBlock: LinearLayout? = null
+  private var keepAliveText: TextView? = null
+  private var keepAliveBattery: Button? = null
+  private var keepAliveShizuku: Button? = null
   private var stepDots: Array<TextView> = emptyArray()
   private var stepLabels: Array<TextView> = emptyArray()
   private var topPulseDot: View? = null
@@ -349,6 +354,7 @@ class GuideWizard(
     // First-run consent card: replaces the status card until the user
     // agrees to the storage/time/notes and the install work begins.
     consentBlock = buildConsentCard().also { it.visibility = View.GONE }
+    keepAliveBlock = buildKeepAliveCard().also { it.visibility = View.GONE }
 
     // Actions: one primary (launch / retry) + secondary utilities.
     val primary = accentButton(activity.getString(R.string.button_launch_engine)).apply {
@@ -361,6 +367,9 @@ class GuideWizard(
     }
     val copyLog = ghostButton(activity.getString(R.string.button_copy_log)).apply {
       setOnClickListener { onCopyLog() }
+    }
+    val keepAlive = ghostButton(activity.getString(R.string.button_keep_alive)).apply {
+      setOnClickListener { onKeepAlive() }
     }
     val back = ghostButton(activity.getString(R.string.button_back_to_harness)).apply {
       visibility = View.GONE
@@ -379,6 +388,7 @@ class GuideWizard(
     actions.addView(primary)
     actions.addView(update)
     actions.addView(copyLog)
+    actions.addView(keepAlive)
     actions.addView(back)
     repeat(actions.childCount - 1) { i ->
       (actions.getChildAt(i).layoutParams as LinearLayout.LayoutParams).bottomMargin = (10 * d).toInt()
@@ -392,6 +402,7 @@ class GuideWizard(
     guide.addView(spacer)
     guide.addView(card)
     guide.addView(consentBlock)
+    guide.addView(keepAliveBlock)
     guide.addView(actions)
     return guide
   }
@@ -483,6 +494,89 @@ class GuideWizard(
   /** Back to the normal status card / action row. */
   fun hideConsent() {
     consentBlock?.visibility = View.GONE
+    statusCard?.visibility = View.VISIBLE
+    actionRow?.visibility = View.VISIBLE
+  }
+
+  /** Keep-alive settings panel: battery-optimization exemption + Shizuku
+   *  appops boost, with a live status line refreshed by the caller. */
+  private fun buildKeepAliveCard(): LinearLayout {
+    val title = TextView(activity).apply {
+      setText(activity.getString(R.string.keep_alive_title))
+      setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
+      textSize = 17f
+      typeface = android.graphics.Typeface.DEFAULT_BOLD
+    }
+    val text = TextView(activity).apply {
+      setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
+      textSize = 13f
+      setPadding(0, (12 * d).toInt(), 0, 0)
+    }
+    keepAliveText = text
+    val battery = accentButton(activity.getString(R.string.keep_alive_battery))
+    keepAliveBattery = battery
+    val shizuku = ghostButton(activity.getString(R.string.keep_alive_shizuku))
+    keepAliveShizuku = shizuku
+    val close = ghostButton(activity.getString(R.string.keep_alive_close)).apply {
+      setOnClickListener { hideKeepAlivePanel() }
+    }
+    val sep = (10 * d).toInt()
+    battery.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      bottomMargin = sep
+    }
+    shizuku.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      bottomMargin = sep
+    }
+    close.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    val buttons = LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding((20 * d).toInt(), (8 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
+      addView(battery)
+      addView(shizuku)
+      addView(close)
+    }
+    val body = LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), 0)
+      addView(title)
+      addView(text)
+    }
+    return LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      background = activity.getDrawable(com.dshmobile.shell.R.drawable.card_bg)
+      layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+      ).apply {
+        topMargin = (40 * d).toInt()
+        leftMargin = (8 * d).toInt()
+        rightMargin = (8 * d).toInt()
+      }
+      addView(body)
+      addView(buttons)
+    }
+  }
+
+  /** Show the keep-alive panel with a status text and the two action buttons
+   *  wired by the caller (battery-optimization page / Shizuku boost). */
+  fun showKeepAlivePanel(
+    statusText: String,
+    onBattery: () -> Unit,
+    onShizuku: () -> Unit,
+  ) {
+    keepAliveText?.text = statusText
+    keepAliveBattery?.setOnClickListener { onBattery() }
+    keepAliveShizuku?.setOnClickListener { onShizuku() }
+    keepAliveBlock?.visibility = View.VISIBLE
+    statusCard?.visibility = View.GONE
+    actionRow?.visibility = View.GONE
+  }
+
+  fun updateKeepAliveStatus(text: String) {
+    keepAliveText?.text = text
+  }
+
+  fun hideKeepAlivePanel() {
+    keepAliveBlock?.visibility = View.GONE
     statusCard?.visibility = View.VISIBLE
     actionRow?.visibility = View.VISIBLE
   }

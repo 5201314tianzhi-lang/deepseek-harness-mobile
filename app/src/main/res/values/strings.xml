@@ -94,4 +94,15 @@
   <string name="consent_exit">Exit</string>
   <string name="update_in_progress">Update already running — wait for it to finish.</string>
   <string name="update_restart_hint">Restart the app to apply the new runtime.</string>
+  <string name="button_keep_alive">Background keep-alive</string>
+  <string name="keep_alive_title">Background keep-alive</string>
+  <string name="keep_alive_close">Done</string>
+  <string name="keep_alive_battery">Battery optimization exemption</string>
+  <string name="keep_alive_shizuku">Shizuku un-killable boost</string>
+  <string name="keep_alive_battery_ignored">• Battery optimization: exempted ✓</string>
+  <string name="keep_alive_battery_not_ignored">• Battery optimization: NOT exempted — open the system page and allow it</string>
+  <string name="keep_alive_autostart_hint">• OEM autostart: enable autostart for this app in your vendor battery/security settings, or the system may kill it in the background</string>
+  <string name="shizuku_boost">Shizuku boost: </string>
+  <string name="shizuku_permission_denied">Shizuku permission denied — grant it in the Shizuku app and retry.</string>
+  <string name="shizuku_service_disconnected">Shizuku user service disconnected.</string>
 </resources>

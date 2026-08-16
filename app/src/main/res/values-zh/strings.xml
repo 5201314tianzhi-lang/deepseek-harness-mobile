@@ -96,4 +96,15 @@
   <string name="consent_exit">退出应用</string>
   <string name="update_in_progress">更新已在运行，请等待完成。</string>
   <string name="update_restart_hint">请重启应用以应用新运行时。</string>
+  <string name="button_keep_alive">后台保活设置</string>
+  <string name="keep_alive_title">后台保活</string>
+  <string name="keep_alive_close">完成</string>
+  <string name="keep_alive_battery">电池优化豁免</string>
+  <string name="keep_alive_shizuku">Shizuku 免杀增强</string>
+  <string name="keep_alive_battery_ignored">• 电池优化：已豁免 ✓</string>
+  <string name="keep_alive_battery_not_ignored">• 电池优化：未豁免 —— 请在系统页面中允许</string>
+  <string name="keep_alive_autostart_hint">• 厂商自启动：请在本机电池/安全设置中开启本应用的自启动，否则系统可能将其在后台杀死</string>
+  <string name="shizuku_boost">Shizuku 增强：</string>
+  <string name="shizuku_permission_denied">Shizuku 授权被拒绝 —— 请在 Shizuku 应用中授权后重试。</string>
+  <string name="shizuku_service_disconnected">Shizuku 用户服务已断开。</string>
 </resources>
