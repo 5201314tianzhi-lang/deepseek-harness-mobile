@@ -51,10 +51,18 @@ class MainActivity : ComponentActivity() {
   private var engineStatus: TextView? = null
   private var statusDetail: TextView? = null
   private var progressBar: android.widget.ProgressBar? = null
-  private var retryButton: Button? = null
+  /** Primary action button: "Launch engine" (ready) or "Retry" (error). */
+  private var primaryButton: Button? = null
   private var backButton: Button? = null
   private var errorBlock: LinearLayout? = null
   private var errorText: TextView? = null
+  /** Wizard step indicators (runtime → container → launch). */
+  private var stepDots: Array<View> = emptyArray()
+  private var stepLabels: Array<TextView> = emptyArray()
+  /** True while the setup wizard asked the user to press Launch manually. */
+  private var manualLaunchRequired = false
+  /** Engine launch in flight (guards the Launch button against double taps). */
+  private val launchInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
   private val engineManager by lazy { EngineManager(this, pickToken) }
   private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
   private var pendingPickCallback: String? = null
@@ -140,7 +148,7 @@ class MainActivity : ComponentActivity() {
     AppLog.init(this)
     logDeviceInfo()
     val root = FrameLayout(this).apply {
-      setBackgroundColor(0xFF0C0F14.toInt())
+      setBackgroundColor(0xFFFFFFFF.toInt())
     }
     webView = WebView(this).apply { id = View.generateViewId() }
     root.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -150,10 +158,12 @@ class MainActivity : ComponentActivity() {
     root.addView(guideView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     setContentView(root)
     configureWebView()
-    // Quick path: the snapshot is already extracted → go straight to the
-    // Harness; the cold start is covered by the thin status bar, not the
-    // full-screen guide.
-    if (File(filesDir, "usr/bin/node").isFile) {
+    // Quick path: snapshot AND mandatory container already provisioned →
+    // go straight to the Harness; the cold start is covered by the thin
+    // status bar, not the full-screen guide.
+    val provisioned = File(filesDir, "usr/bin/node").isFile &&
+      File(filesDir, "rootfs/bin/bash").isFile
+    if (provisioned) {
       webView.visibility = View.VISIBLE
     } else {
       guideView.visibility = View.VISIBLE
@@ -597,7 +607,7 @@ class MainActivity : ComponentActivity() {
   private fun accentButton(text: String): Button {
     return Button(this).apply {
       this.text = text
-      setTextColor(0xFF0B0E14.toInt())
+      setTextColor(0xFFFFFFFF.toInt())
       textSize = 14f
       typeface = android.graphics.Typeface.DEFAULT_BOLD
       background = getDrawable(com.dshmobile.shell.R.drawable.pill_accent)
@@ -741,32 +751,21 @@ class MainActivity : ComponentActivity() {
     card.addView(cardBody)
     card.addView(errorBlock)
 
-    // Actions.
-    val retry = accentButton(getString(R.string.button_retry)).apply {
+    // Actions: one primary (launch / retry) + secondary utilities.
+    val primary = accentButton(getString(R.string.button_launch_engine)).apply {
       visibility = View.GONE
-      setOnClickListener { startEngineFlow() }
+      setOnClickListener {
+        // After setup (manual gate) the primary action launches the engine;
+        // in error states it re-runs the setup flow.
+        if (manualLaunchRequired) launchEngine() else startEngineFlow()
+      }
     }
-    retryButton = retry
+    primaryButton = primary
     val update = ghostButton(getString(R.string.button_check_update)).apply {
       setOnClickListener {
         UpdateManager(this@MainActivity).checkAndApply { status ->
           runOnUiThread { showGuideStatus(status, null, true) }
         }
-      }
-    }
-    val installContainer = ghostButton(getString(R.string.button_install_container)).apply {
-      setOnClickListener {
-        isEnabled = false
-        Thread {
-          val ok = RootfsDownloader.install(this@MainActivity.applicationContext)
-          runOnUiThread {
-            isEnabled = true
-            showGuideStatus(
-              if (ok) getString(R.string.container_install_done)
-              else getString(R.string.container_install_failed), null, false,
-            )
-          }
-        }.start()
       }
     }
     val copyLog = ghostButton(getString(R.string.button_copy_log)).apply {
@@ -791,23 +790,108 @@ class MainActivity : ComponentActivity() {
         rightMargin = (8 * d).toInt()
       }
     }
-    actions.addView(retry)
+    actions.addView(primary)
     actions.addView(update)
-    actions.addView(installContainer)
     actions.addView(copyLog)
     actions.addView(back)
     repeat(actions.childCount - 1) { i ->
       (actions.getChildAt(i).layoutParams as LinearLayout.LayoutParams).bottomMargin = (10 * d).toInt()
     }
 
+    // Wizard step indicator: runtime → container → launch.
+    val steps = buildStepIndicator()
     val spacer = View(this).apply {
       layoutParams = LinearLayout.LayoutParams(0, 0).apply { weight = 1f }
     }
     guide.addView(brand)
+    guide.addView(steps)
     guide.addView(spacer)
     guide.addView(card)
     guide.addView(actions)
     return guide
+  }
+
+  /** Horizontal three-step indicator (runtime → container → launch). */
+  private fun buildStepIndicator(): LinearLayout {
+    val d = resources.displayMetrics.density
+    val names = listOf(
+      getString(R.string.step_runtime),
+      getString(R.string.step_container),
+      getString(R.string.step_launch),
+    )
+    val dots = arrayOfNulls<View>(3)
+    val labels = arrayOfNulls<TextView>(3)
+    val row = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = android.view.Gravity.CENTER_HORIZONTAL
+      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        topMargin = (36 * d).toInt()
+        leftMargin = (24 * d).toInt()
+        rightMargin = (24 * d).toInt()
+      }
+    }
+    val circleSize = (28 * d).toInt()
+    for (i in 0..2) {
+      val dot = TextView(this).apply {
+        textSize = 14f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        gravity = android.view.Gravity.CENTER
+        layoutParams = LinearLayout.LayoutParams(circleSize, circleSize)
+      }
+      dots[i] = dot
+      val label = TextView(this).apply {
+        text = names[i]
+        textSize = 11f
+        setTextColor(resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
+        gravity = android.view.Gravity.CENTER
+        setPadding(0, (6 * d).toInt(), 0, 0)
+      }
+      labels[i] = label
+      val cell = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = android.view.Gravity.CENTER_HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT).apply { weight = 1f }
+      }
+      cell.addView(dot)
+      cell.addView(label)
+      row.addView(cell)
+      if (i < 2) {
+        val line = View(this).apply {
+          background = getDrawable(com.dshmobile.shell.R.drawable.divider)
+          val lp = LinearLayout.LayoutParams(0, (1 * d).toInt())
+          lp.weight = 1f
+          lp.topMargin = (circleSize / 2 - (1 * d).toInt()).toInt()
+          layoutParams = lp
+        }
+        row.addView(line)
+      }
+    }
+    stepDots = dots.map { it!! }.toTypedArray()
+    stepLabels = labels.map { it!! }.toTypedArray()
+    return row
+  }
+
+  /** Render the wizard steps: done (filled + check), active (ring), pending (outline). */
+  private fun renderSteps(done: Int, active: Int) {
+    for (i in stepDots.indices) {
+      val dot = stepDots[i] as TextView
+      dot.background = when {
+        i < done -> getDrawable(com.dshmobile.shell.R.drawable.step_done)
+        i == active -> getDrawable(com.dshmobile.shell.R.drawable.step_active)
+        else -> getDrawable(com.dshmobile.shell.R.drawable.step_pending)
+      }
+      val label = stepLabels[i]
+      label.setTextColor(resources.getColor(
+        if (i <= done) com.dshmobile.shell.R.color.text_primary
+        else com.dshmobile.shell.R.color.text_secondary, null,
+      ))
+      if (i < done) {
+        dot.text = "✓"
+        dot.setTextColor(0xFFFFFFFF.toInt())
+      } else {
+        dot.text = ""
+      }
+    }
   }
 
   /** Thin cold-start bar overlaying the Harness: pulse dot + status, taps to
@@ -831,7 +915,7 @@ class MainActivity : ComponentActivity() {
       orientation = LinearLayout.HORIZONTAL
       gravity = android.view.Gravity.CENTER_VERTICAL
       setPadding((20 * d).toInt(), (10 * d).toInt(), (20 * d).toInt(), (10 * d).toInt())
-      setBackgroundColor(0xE60C0F14.toInt())
+      setBackgroundColor(0xE6FFFFFF.toInt())
       visibility = View.GONE
       setOnClickListener { openGuideFromTopBar() }
     }
@@ -843,13 +927,13 @@ class MainActivity : ComponentActivity() {
 
   private fun openGuideFromTopBar() {
     guideFromTopBar = true
-    retryButton?.visibility = View.VISIBLE
+    primaryButton?.visibility = View.GONE
     backButton?.visibility = View.VISIBLE
     showGuide()
   }
 
   /** Set the guide's status row; shows the spinner when the status is
-   *  indeterminate progress (extraction, engine start). */
+   *  indeterminate progress (extraction, container install, engine start). */
   private fun showGuideStatus(title: String, detail: String?, busy: Boolean) {
     engineStatus?.text = title
     statusDetail?.text = detail
@@ -857,13 +941,32 @@ class MainActivity : ComponentActivity() {
     progressBar?.visibility = if (busy) View.VISIBLE else View.GONE
     if (busy) {
       errorBlock?.visibility = View.GONE
-      retryButton?.visibility = View.GONE
+      primaryButton?.visibility = View.GONE
+    }
+  }
+
+  /** Ready state: everything installed → show the Launch engine button. */
+  private fun showLaunchReady() {
+    showGuideStatus(
+      getString(R.string.status_ready_to_launch),
+      getString(R.string.status_ready_to_launch_detail),
+      false,
+    )
+    renderSteps(3, 3)
+    primaryButton?.apply {
+      visibility = View.VISIBLE
+      text = getString(R.string.button_launch_engine)
+      isEnabled = true
     }
   }
 
   private fun showGuideError(title: String) {
     showGuideStatus(title, null, false)
-    retryButton?.visibility = View.VISIBLE
+    primaryButton?.apply {
+      visibility = View.VISIBLE
+      text = getString(R.string.button_retry)
+      isEnabled = true
+    }
     // Surface the tail of the diagnostic log as inline error context.
     val tail = AppLog.tail(1200)
     errorText?.text = tail
@@ -948,7 +1051,6 @@ class MainActivity : ComponentActivity() {
     // on device: a double start kills the engine process).
     if (!engineFlowRunning.compareAndSet(false, true)) return
     AppLog.log("boot", "engine flow start")
-    val firstLaunch = !File(filesDir, "usr/bin/node").isFile
     Thread {
       try {
         val probe = EngineProbe.check()
@@ -958,12 +1060,12 @@ class MainActivity : ComponentActivity() {
           runOnUiThread { showWeb() }
           return@Thread
         }
+        var setupRan = false
         if (!engineManager.engineReady) {
           runOnUiThread {
-            if (firstLaunch) {
-              showGuide()
-              showGuideStatus(getString(R.string.status_first_extract), null, true)
-            }
+            showGuide()
+            renderSteps(0, 0)
+            showGuideStatus(getString(R.string.status_first_extract), null, true)
           }
           AppLog.log("boot", "extracting snapshot to " + engineManager.usrDir)
           val ok = engineManager.extractSnapshot { done, _ ->
@@ -982,55 +1084,52 @@ class MainActivity : ComponentActivity() {
             AppLog.log("boot", "extract FAILED")
             return@Thread
           }
+          setupRan = true
           AppLog.log("boot", "extract ok, engineReady=" + engineManager.engineReady)
         }
-        // Quick path: engine already extracted → Harness visible now, the
-        // cold start is reported by the thin status bar.
-        if (engineManager.engineReady) {
+        // Step 2 — Ubuntu container is mandatory: install it unless ready.
+        val proot = ProotRuntime(this, engineManager.usrDir, File(engineManager.ensureDshDataHome(), "workspace"))
+        if (!proot.rootfsReady()) {
           runOnUiThread {
-            if (!firstLaunch) {
-              webView.visibility = View.VISIBLE
-              showTopBar(getString(R.string.status_engine_starting))
+            renderSteps(if (setupRan) 1 else 1, 1)
+            showGuideStatus(
+              getString(R.string.status_container_installing),
+              getString(R.string.status_container_installing_detail),
+              true,
+            )
+          }
+          AppLog.log("boot", "installing mandatory Ubuntu container")
+          val ok = RootfsDownloader.install(applicationContext)
+          if (!ok) {
+            AppLog.log("boot", "container install failed")
+            runOnUiThread {
+              renderSteps(1, 1)
+              showGuideError(getString(R.string.container_install_failed))
             }
+            return@Thread
           }
+          setupRan = true
+          AppLog.log("boot", "container ready")
         }
-        if (!engineManager.startEngine()) {
+        // Step 3 — after any setup, the user launches the engine manually;
+        // a fully provisioned install (snapshot + container) starts straight
+        // into the Harness.
+        if (setupRan) {
           runOnUiThread {
-            showGuideError(getString(R.string.status_engine_start_failed))
+            manualLaunchRequired = true
+            showGuide()
+            renderSteps(2, 2)
+            showLaunchReady()
           }
-          AppLog.log("boot", "startEngine() returned false")
+          AppLog.log("boot", "setup done, waiting for manual launch")
           return@Thread
         }
-        // Poll up to 30s for the web service.
-        var reached = false
-        for (i in 0..30) {
-          if (EngineProbe.check().optBoolean("running", false)) {
-            reached = true
-            startEngineService()
-            applyShizukuKeepAlive()
-            runOnUiThread { showWeb() }
-            break
-          }
-          Thread.sleep(1000)
+        // Quick path: everything provisioned → cold start under the thin bar.
+        runOnUiThread {
+          webView.visibility = View.VISIBLE
+          showTopBar(getString(R.string.status_engine_starting))
         }
-        if (!reached) {
-          AppLog.log("boot", "engine web service not reachable within 30s poll")
-          val proc = EngineManager.engineProcess
-          if (proc == null) {
-            AppLog.log("boot", "engine process: null")
-          } else if (!proc.isAlive) {
-            val code = try { proc.exitValue() } catch (_: Exception) { -1 }
-            AppLog.log("boot", "engine process DEAD exitValue=" + code)
-          } else {
-            AppLog.log("boot", "engine process alive but web service down")
-          }
-          AppLog.includeFile(java.io.File(filesDir, "engine.log"), "engine.log")
-          runOnUiThread {
-            showGuideError(getString(R.string.status_engine_timeout))
-          }
-        } else {
-          AppLog.log("boot", "engine reachable, showing web")
-        }
+        launchEngineInternal()
       } catch (t: Throwable) {
         AppLog.log("boot", "engine flow exception", t)
         runOnUiThread {
@@ -1040,6 +1139,65 @@ class MainActivity : ComponentActivity() {
         engineFlowRunning.set(false)
       }
     }.start()
+  }
+
+  /** Manual launch action (guide primary button). */
+  private fun launchEngine() {
+    if (!launchInFlight.compareAndSet(false, true)) return
+    primaryButton?.isEnabled = false
+    showGuideStatus(getString(R.string.status_engine_starting), null, true)
+    Thread {
+      launchEngineInternal()
+      launchInFlight.set(false)
+    }.start()
+  }
+
+  /** Start the engine and poll until the web service answers. */
+  private fun launchEngineInternal() {
+    try {
+      if (!engineManager.startEngine()) {
+        runOnUiThread {
+          showGuideError(getString(R.string.status_engine_start_failed))
+        }
+        AppLog.log("boot", "startEngine() returned false")
+        return
+      }
+      // Poll up to 30s for the web service.
+      var reached = false
+      for (i in 0..30) {
+        if (EngineProbe.check().optBoolean("running", false)) {
+          reached = true
+          startEngineService()
+          applyShizukuKeepAlive()
+          runOnUiThread { showWeb() }
+          break
+        }
+        Thread.sleep(1000)
+      }
+      if (!reached) {
+        AppLog.log("boot", "engine web service not reachable within 30s poll")
+        val proc = EngineManager.engineProcess
+        if (proc == null) {
+          AppLog.log("boot", "engine process: null")
+        } else if (!proc.isAlive) {
+          val code = try { proc.exitValue() } catch (_: Exception) { -1 }
+          AppLog.log("boot", "engine process DEAD exitValue=" + code)
+        } else {
+          AppLog.log("boot", "engine process alive but web service down")
+        }
+        AppLog.includeFile(java.io.File(filesDir, "engine.log"), "engine.log")
+        runOnUiThread {
+          showGuideError(getString(R.string.status_engine_timeout))
+        }
+      } else {
+        AppLog.log("boot", "engine reachable, showing web")
+      }
+    } catch (t: Throwable) {
+      AppLog.log("boot", "engine launch exception", t)
+      runOnUiThread {
+        showGuideError(getString(R.string.status_engine_start_failed))
+      }
+    }
   }
 
   /** Run the runtime snapshot update; status mirrored to a file for adb verification. */
