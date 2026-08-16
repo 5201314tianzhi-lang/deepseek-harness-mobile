@@ -1,0 +1,97 @@
+# Proot Ubuntu Container — Design
+
+Date: 2026-08-16
+Status: Approved (design review), pending spec review
+
+## 1. Background
+
+The app runs a pseudo-Termux snapshot (filesDir/usr, ~484MB, 550 binaries)
+under linker64 + LD_PRELOAD exec rerouting. The engine (node) and the agent
+work, but the agent's shell environment is Termux — it differs from a standard
+cloud/server environment, which limits what coding tasks the agent can take on
+(e.g. installing packages, matching server-side behavior).
+
+Goal: give the agent a standard Ubuntu LTS environment — a real `/` it can
+apt-install into — inside a user-space proot container. No root, no kernel
+changes.
+
+## 2. Architecture
+
+```
+agent (node engine, inside snapshot)
+  → node-pty → bash (snapshot usr/bin/bash)
+    → proot (filesDir/proot/proot, Termux-repo binary)
+        -0 -r <filesDir>/rootfs              # Ubuntu LTS rootfs (on-demand download)
+        -b /proc -b /dev -b /sys             # pseudo-terminal / system interfaces
+        -b <host resolv.conf>                # network: shares host stack, DNS via bind
+        -b <host workspace>:<container /root/workspace>   # file interop
+        -w /root/workspace bash -c "<agent command>"
+```
+
+The engine keeps running on the snapshot (unchanged); only the agent's shell
+commands are wrapped by proot into the Ubuntu container.
+
+## 3. Components
+
+### 3.1 Proot runtime (filesDir/proot/)
+- Source: Termux official repo debs `proot` + `libtalloc` (aarch64), extracted.
+- Zero compilation; same build ecosystem as the snapshot, Android/SELinux
+  adaptations already in Termux's proot.
+- CI downloads both debs, verifies arch/deps, packages them into APK assets
+  (`assets/proot/`); first launch extracts to filesDir/proot/ (W^X: .so
+  write-bit stripped, like snapshot libs).
+- Kept separate from the snapshot tree (independent responsibility/updates).
+
+### 3.2 Rootfs downloader (extends UpdateManager pattern)
+- Source: proot-distro Ubuntu rootfs image (ubuntu-<arch>.tar.xz, ~300-400MB).
+- Flow: download → sha256 verify → extract to filesDir/rootfs/.
+- Trigger: automatic — the first agent command that needs the container (or an
+  explicit install request) starts the download; progress surfaced through
+  AppLog and the boot screen; user can cancel.
+- Download failure → retryable error; no resume support (YAGNI).
+
+### 3.3 ContainerExec
+- Detects rootfs readiness. Not ready → agent command fails with a readable
+  error ("Ubuntu container not installed") and triggers the download.
+- Ready → assembles the proot wrapper and execs it.
+- No W^X handling on rootfs extraction: Ubuntu packages are standard ELF
+  layouts (read-only text); if a dlopen rejection ever appears, apply the
+  snapshot strip-write-bit policy as a follow-up.
+
+## 4. Key decisions
+
+- `-0` fake root: getuid=0 inside the container, apt and system dirs writable —
+  confined to the container, real device untouched.
+- File interop: host `DSH_HOME/workspace` bound to container `/root/workspace`;
+  `-w` pins that directory. Agent's code artifacts land in the host tree so the
+  web UI file tree stays consistent.
+- Network: proot shares the host network stack; resolv.conf handling follows
+  the proot-distro practice (bind host resolv.conf when present, else fall
+  back to a public DNS file inside the container).
+- No breakpoint resume for downloads (retry only).
+- proot lives outside the snapshot (no snapshot mutation).
+
+## 5. Error handling
+
+| Situation | Behavior |
+|---|---|
+| rootfs not downloaded | command fails with readable error; download triggered |
+| download fails | retryable error, logged (AppLog) |
+| proot binary missing (asset missing) | command fails with readable error, logged |
+| apt/network failure inside container | natural shell error surfaced to agent |
+
+## 6. Acceptance criteria (on-device)
+
+1. Agent runs `apt update && apt install <pkg>` inside the container successfully.
+2. bash / node / python / git work inside the container.
+3. Files created inside `/root/workspace` appear in the host DSH_HOME/workspace
+   (web UI file tree).
+4. Engine startup and non-container behavior unchanged.
+5. First-command-without-rootfs produces a readable error, not a crash.
+
+## 7. Out of scope (YAGNI)
+
+- Multiple distros (proot-distro-style switching).
+- Download resume / bandwidth control.
+- Container-internal HOME beyond workspace mapping.
+- Running the engine itself inside the container.
