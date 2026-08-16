@@ -2,10 +2,8 @@ package com.dshmobile.shell
 
 import android.content.Context
 import java.io.File
-import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.security.MessageDigest
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 
@@ -44,19 +42,6 @@ object RootfsDownloader {
     }
   }
 
-  private fun sha256(file: File): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    file.inputStream().use { ins ->
-      val buf = ByteArray(64 * 1024)
-      while (true) {
-        val n = ins.read(buf)
-        if (n < 0) break
-        digest.update(buf, 0, n)
-      }
-    }
-    return digest.digest().joinToString("") { "%02x".format(it) }
-  }
-
   fun install(context: Context): Boolean {
     if (running) return false
     running = true
@@ -67,25 +52,10 @@ object RootfsDownloader {
       val rootfs = File(context.filesDir, "rootfs")
 
       AppLog.log("rootfs", "downloading " + BASE_URL + tarballName)
-      val conn = URL(BASE_URL + tarballName).openConnection() as HttpURLConnection
-      conn.connectTimeout = 30_000
-      conn.readTimeout = 60_000
-      conn.inputStream.use { ins ->
-        FileOutputStream(tmp).use { out ->
-          val buf = ByteArray(256 * 1024)
-          var total = 0L
-          while (true) {
-            val n = ins.read(buf)
-            if (n < 0) break
-            out.write(buf, 0, n)
-            total += n
-          }
-          AppLog.log("rootfs", "downloaded " + total + " bytes")
-        }
-      }
+      Downloader.downloadToFile(BASE_URL + tarballName, tmp)
 
       val want = expectedChecksum(context, tarballName)
-      if (want != null && !sha256(tmp).equals(want, ignoreCase = true)) {
+      if (want != null && !Downloader.sha256(tmp).equals(want, ignoreCase = true)) {
         AppLog.log("rootfs", "sha256 mismatch, expected " + want)
         return false
       }

@@ -4,9 +4,6 @@ import android.content.Context
 import android.os.Environment
 import android.util.Log
 import java.io.File
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 
 /**
  * Owns the embedded Termux environment snapshot: first-launch extraction into
@@ -33,10 +30,10 @@ class EngineManager(private val context: Context, private val pickToken: String?
   private val nodeBin = File(usrDir, "bin/node")
   private val dshBin = File(usrDir, "lib/node_modules/@deepseek-ai/dsh/lib/bin.js")
 
-  /** System library found by [probePtyNodeInNode] that provides the missing
-   *  _Unwind_Resume symbol; added to the engine LD_PRELOAD (null = none). */
-  @Volatile
-  private var unwindLib: String? = null
+  /** pty.node loading diagnostics + _Unwind_Resume provider resolution. */
+  private val unwindResolver by lazy {
+    UnwindResolver(context, usrDir, homeDir, nodeBin)
+  }
 
   val engineReady: Boolean get() = nodeBin.exists()
 
@@ -60,158 +57,14 @@ class EngineManager(private val context: Context, private val pickToken: String?
       AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + usrDir.parentFile)
       SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
       homeDir.mkdirs()
-      diagnosePtyNode()
-      probePtyNodeInNode()
+      unwindResolver.diagnosePtyNode()
+      unwindResolver.probeInNodeIfPresent()
       AppLog.log("extract", "done")
       true
     } catch (t: Throwable) {
       Log.e(TAG, "snapshot extract failed", t)
       AppLog.log("extract", "FAILED", t)
       false
-    }
-  }
-
-  /**
-   * Probe pty.node loading inside the real node environment (same env as the
-   * engine): Java's System.load cannot represent it (no LD_LIBRARY_PATH, no
-   * node symbols). This reports the actual error node-pty's loader swallows —
-   * missing dependency vs NAPI/ABI mismatch vs loader path issue.
-   */
-  private fun probePtyNodeInNode() {
-    try {
-      val pty = File(
-        usrDir,
-        "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
-      )
-      if (!pty.isFile) return
-      resolveUnwindLib(pty)
-    } catch (t: Throwable) {
-      AppLog.log("diag", "node pty probe failed to run", t)
-    }
-  }
-
-  /**
-   * Find a library that makes pty.node loadable (cached in [unwindLib]).
-   * The snapshot's libc++_shared.so exports __cxa_* but not the unwind
-   * runtime (_Unwind_Resume), so dlopen fails; system libraries differ per
-   * Android version/vendor, so probe them and LD_PRELOAD whichever works.
-   */
-  private fun resolveUnwindLib(pty: File): String? {
-    if (unwindLib != null) return unwindLib
-    for (candidate in unwindCandidates()) {
-      val (code, out) = probePtyNode(pty, candidate)
-      AppLog.log("diag", "node pty probe (preload=" + (candidate ?: "none") + ") exit=" + code +
-        " output: " + out.trim().take(300))
-      if (out.contains("NODE_PTY_OK")) {
-        unwindLib = candidate
-        if (candidate != null) {
-          AppLog.log("diag", "pty.node loads with preload=" + candidate)
-        }
-        return unwindLib
-      }
-    }
-    return null
-  }
-
-  /**
-   * Candidates that may provide the missing C++ unwind symbol
-   * (_Unwind_Resume): the snapshot's libc++_shared.so exports __cxa_* but not
-   * the unwind runtime (Termux links it statically), so dlopen of pty.node
-   * fails on every device. The first candidate is the bundled archive-linked
-   * libunwind-patch.so (built from the snapshot's own libunwind.a in CI);
-   * system libraries are probed as fallbacks for ROMs that ship one.
-   */
-  private fun unwindCandidates(): List<String?> {
-    return listOfNotNull(
-      bundledUnwindPatch()?.absolutePath,
-      null,
-      "/system/lib64/libgcc.so",
-      "/system/lib64/libc++.so",
-      "/system/lib64/libc++_shared.so",
-      "/system/lib64/libunwind.so",
-    )
-  }
-
-  /** Extract the bundled libunwind-patch.so (per-ABI) from APK assets. */
-  private fun bundledUnwindPatch(): File? {
-    return try {
-      val target = File(context.filesDir, "libunwind-patch.so")
-      if (target.isFile && target.length() > 0L) return target
-      val abi = when {
-        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("arm64") } -> "arm64-v8a"
-        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("x86_64") } -> "x86_64"
-        else -> null
-      } ?: return null
-      context.assets.open("unwind/libunwind-patch-$abi.so").use { input ->
-        target.outputStream().use { out -> input.copyTo(out) }
-      }
-      target.setExecutable(true, true)
-      target.setWritable(false, false) // W^X: preload libs must not be writable
-      AppLog.log("diag", "extracted bundled unwind patch -> " + target.absolutePath)
-      target
-    } catch (t: Throwable) {
-      AppLog.log("diag", "bundled unwind patch unavailable", t)
-      null
-    }
-  }
-
-  private fun probePtyNode(pty: File, preload: String?): Pair<Int, String> {
-    val script = "try{require(" + org.json.JSONObject.quote(pty.absolutePath) +
-      ");console.log('NODE_PTY_OK')}catch(e){console.log('NODE_PTY_FAIL: '+e.message)}"
-    val env = mapOf(
-      "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
-      "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
-      "HOME" to homeDir.absolutePath,
-      "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
-    ) + opensslConfEnv()
-    val pb = ProcessBuilder(
-      "/system/bin/linker64", nodeBin.absolutePath, "-e", script,
-    ).also { b ->
-      b.environment().putAll(env)
-      if (preload != null) b.environment()["LD_PRELOAD"] = preload
-      b.redirectErrorStream(true)
-    }
-    val proc = pb.start()
-    val out = proc.inputStream.bufferedReader().readText()
-    val code = try { proc.waitFor() } catch (_: Exception) { -1 }
-    return code to out
-  }
-
-  /**
-   * Diagnostic for "Failed to load native module: pty.node": report whether
-   * the module exists after extraction and probe dlopen from the Java side
-   * (System.load). The node-pty loader swallows the real dlopen error, so
-   * this is the only way to see whether the failure is a missing file, a
-   * linker rejection (deps/permissions/format) or a node-side ABI check.
-   */
-  private fun diagnosePtyNode() {
-    try {
-      val pty = File(
-        usrDir,
-        "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
-      )
-      AppLog.log("diag", "pty.node exists=" + pty.exists() + " size=" + pty.length() +
-        " canRead=" + pty.canRead() + " canExec=" + pty.canExecute())
-      if (pty.exists()) {
-        try {
-          System.load(pty.absolutePath)
-          AppLog.log("diag", "Java dlopen pty.node OK (linker accepts it)")
-        } catch (t: Throwable) {
-          AppLog.log("diag", "Java dlopen pty.node FAILED: " + t.message)
-        }
-      }
-      // Also mirror the module into prebuilds/android-arm64 (the loader's last
-      // fallback path) in case the build/Release require has a path quirk.
-      val prebuilt = File(pty.parentFile.parentFile.parentFile, "prebuilds/android-arm64/pty.node")
-      if (pty.isFile && !prebuilt.isFile) {
-        prebuilt.parentFile?.mkdirs()
-        pty.copyTo(prebuilt, overwrite = true)
-        prebuilt.setExecutable(true, true)
-        prebuilt.setWritable(false, false)
-        AppLog.log("diag", "mirrored pty.node -> " + prebuilt.absolutePath)
-      }
-    } catch (t: Throwable) {
-      AppLog.log("diag", "pty.node diagnostic failed", t)
     }
   }
 
@@ -463,7 +316,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
       usrDir,
       "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
     )
-    val unwind = if (ptyNode.isFile) resolveUnwindLib(ptyNode) else null
+    val unwind = if (ptyNode.isFile) unwindResolver.resolveIfNeeded(ptyNode) else null
     val preloadValue = if (unwind != null) preloadPath + ":" + unwind else preloadPath
     if (unwind != null) {
       AppLog.log("engine", "LD_PRELOAD += " + unwind)
@@ -499,7 +352,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
         // Auth token for the directory-pick bridge endpoint (validated by the
         // web-compat plugin as x-dsh-pick-token).
         "DSH_PICK_TOKEN" to (pickToken ?: ""),
-      ) + opensslConfEnv() + termuxExecEnv
+      ) + unwindResolver.opensslConfEnv() + termuxExecEnv
       engineProcess = startWithArgs(args, env)
       // The cooldown is only set after a real start; a failed path does not
       // consume the window so a retry can happen immediately.
@@ -581,22 +434,6 @@ class EngineManager(private val context: Context, private val pickToken: String?
    *  filesDir (usrDir.parentFile), so the file lives at filesDir/usr/etc/... —
    *  the candidates below are relative to usrDir and must NOT repeat "usr".
    */
-  private fun opensslConfEnv(): Map<String, String> {
-    for (candidate in listOf(
-      "etc/tls/openssl.cnf",
-      "etc/ssl/openssl.cnf",
-    )) {
-      val f = File(usrDir, candidate)
-      if (f.isFile) {
-        AppLog.log("engine", "OPENSSL_CONF -> " + f.absolutePath)
-        return mapOf("OPENSSL_CONF" to f.absolutePath)
-      }
-    }
-    AppLog.log("engine", "no openssl.cnf found in snapshot (checked " +
-      listOf("etc/tls/openssl.cnf", "etc/ssl/openssl.cnf").joinToString(", ") +
-      " under " + usrDir.absolutePath + "); leaving OPENSSL_CONF unset")
-    return emptyMap()
-  }
 
   /** Stop the engine process (best-effort). */
   fun stopEngine() {    EngineManager.engineProcess?.destroy()
