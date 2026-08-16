@@ -1,27 +1,41 @@
 package com.dshmobile.shell
 
 import android.content.Context
-import android.content.Intent
-import android.os.IBinder
+import android.os.Binder
 import android.os.Parcel
-import rikka.shizuku.ShizukuUserService
 
 /**
- * Shizuku user service (keep-alive L4): runs as the shell/root identity in a
- * separate process and applies the appops exemptions that make OEM battery
- * managers stop killing the app — `RUN_IN_BACKGROUND` and
- * `RUN_ANY_IN_BACKGROUND` allow. Without these, aggressive vendors kill the
+ * Shizuku user service (keep-alive L4): instantiated by the Shizuku server
+ * (v13 protocol — the server reflects a (Context) or no-arg constructor and
+ * runs the instance with the shell identity, so this is a plain Binder, NOT
+ * an android Service and NOT declared in the manifest).
+ *
+ * It applies the appops exemptions that make OEM battery managers stop
+ * killing the app: `cmd appops set <pkg> RUN_IN_BACKGROUND allow` and
+ * `RUN_ANY_IN_BACKGROUND allow`. Without these, aggressive vendors kill the
  * process regardless of the foreground service; with them the process becomes
  * effectively un-killable by the background policy.
  *
- * Protocol: plain binder transact (code [CMD_APPLY_APPOPS]) with the package
- * name as the input string; the reply carries a human-readable result.
+ * Protocol: app binds via [rikka.shizuku.Shizuku.bindUserService], receives
+ * this binder through the ServiceConnection, and sends
+ * [CMD_APPLY_APPOPS] with the package name as the input string; the reply
+ * carries a human-readable result.
  */
-class KeepAliveUserService : ShizukuUserService() {
+class KeepAliveUserService : Binder() {
 
-  private val binder = object : android.os.Binder() {
-    override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-      if (code == CMD_APPLY_APPOPS) {
+  /** Server-side (Context) constructor — optional but preferred by the
+   *  Shizuku v13 server; the no-arg constructor covers older servers. */
+  @Suppress("UNUSED_PARAMETER")
+  constructor(context: Context) : this()
+
+  override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+    when (code) {
+      USER_SERVICE_DESTROY -> {
+        // Reserved destroy transaction: the server asks us to exit.
+        android.os.Process.killProcess(android.os.Process.myPid())
+        return true
+      }
+      CMD_APPLY_APPOPS -> {
         val pkg = data.readString() ?: return false
         val result = applyAppOps(pkg)
         if (reply != null) {
@@ -30,11 +44,9 @@ class KeepAliveUserService : ShizukuUserService() {
         }
         return true
       }
-      return super.onTransact(code, data, reply, flags)
     }
+    return super.onTransact(code, data, reply, flags)
   }
-
-  override fun onBind(intent: Intent?): IBinder? = binder
 
   /** Run the appops commands as the remote (shell) identity. */
   private fun applyAppOps(pkg: String): String {
@@ -62,5 +74,8 @@ class KeepAliveUserService : ShizukuUserService() {
   companion object {
     /** Binder transaction code: apply the keep-alive appops exemptions. */
     const val CMD_APPLY_APPOPS = 1
+
+    /** Shizuku reserved "destroy" transaction (16777115). */
+    private const val USER_SERVICE_DESTROY = 16777115
   }
 }

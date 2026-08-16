@@ -25,15 +25,6 @@
       android:exported="false"
       android:foregroundServiceType="dataSync" />
 
-    <!-- Keep-alive (L4): Shizuku user service, runs as the shell identity to
-         apply the appops background exemptions. Must not be bindable by
-         other apps (INTERACT_ACROSS_USERS_FULL protects the binding). -->
-    <service
-      android:name=".KeepAliveUserService"
-      android:exported="false"
-      android:process=":keepalive"
-      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
-
     <!-- Keep-alive (L1): boot / upgrade / power / unlock re-raise the
          foreground service (Android 12+ exempts these broadcasts from the
          background-start restriction). -->
