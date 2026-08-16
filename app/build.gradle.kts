@@ -75,10 +75,11 @@ android {
   }
 
   lint {
-    // Offline environments have no lint-gradle dependency cache (CN network);
-    // lint is not on the release critical path.
+    // The CI quality gate runs `lintDebug` and fails on errors (abortOnError).
+    // checkReleaseBuilds stays off: release builds are not blocked by lint —
+    // the gate is explicit, not implicit on the release path.
     checkReleaseBuilds = false
-    abortOnError = false
+    abortOnError = true
   }
 
   testOptions {
