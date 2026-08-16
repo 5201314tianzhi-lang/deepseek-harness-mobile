@@ -1,13 +1,12 @@
 package com.dshmobile.shell
 
-import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.io.File
 
 /** SHA-256 correctness for the download/rootfs verification path. */
 class DownloaderTest {
-
   private fun tmpFile(content: ByteArray): File {
     val f = File.createTempFile("dsh-test", ".bin")
     f.writeBytes(content)
@@ -54,45 +53,72 @@ class DownloaderTest {
     assertEquals(64, ha.length)
   }
 
+  /** Minimal single-shot HTTP server (the JDK httpserver module is not on the
+   *  Android test bootclasspath). Serves one request then closes. */
+  private fun withServer(statusCode: Int, body: ByteArray, block: (port: Int) -> Unit) {
+    val server = java.net.ServerSocket(0)
+    server.reuseAddress = true
+    val thread = Thread {
+      try {
+        server.accept().use { socket ->
+          socket.soTimeout = 5000
+          val input = socket.getInputStream()
+          val buf = ByteArray(4096)
+          var seen = ""
+          while (!seen.contains("\r\n\r\n")) {
+            val n = input.read(buf)
+            if (n < 0) break
+            seen += String(buf, 0, n)
+          }
+          val out = socket.getOutputStream()
+          val head = "HTTP/1.1 $statusCode T\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
+          out.write(head.toByteArray())
+          out.write(body)
+          out.flush()
+        }
+      } catch (_: Exception) {
+      } finally {
+        try {
+          server.close()
+        } catch (_: Exception) {
+        }
+      }
+    }
+    thread.isDaemon = true
+    thread.start()
+    try {
+      block(server.localPort)
+    } finally {
+      thread.join(5000)
+      try {
+        server.close()
+      } catch (_: Exception) {
+      }
+    }
+  }
+
   @Test
   fun `download rejects non-200`() {
-    // Local server returning 404 must surface as IOException, not a silent success.
-    val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress(0), 0)
-    server.createContext("/missing") { ex ->
-      ex.sendResponseHeaders(404, -1)
-      ex.close()
-    }
-    server.start()
-    try {
-      val url = "http://127.0.0.1:" + server.address.port + "/missing"
+    withServer(404, ByteArray(0)) { port ->
+      val url = "http://127.0.0.1:$port/missing"
       val target = tmpFile(ByteArray(0))
-      val e = assertThrows(java.io.IOException::class.java) {
-        Downloader.downloadToFile(url, target, connectTimeoutMs = 5_000, readTimeoutMs = 5_000)
-      }
+      val e =
+        assertThrows(java.io.IOException::class.java) {
+          Downloader.downloadToFile(url, target, connectTimeoutMs = 5_000, readTimeoutMs = 5_000)
+        }
       assert(e.message!!.contains("404"))
-    } finally {
-      server.stop(0)
     }
   }
 
   @Test
   fun `download streams content to file`() {
     val payload = "mirror-content-" + "x".repeat(300 * 1024)
-    val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress(0), 0)
-    server.createContext("/ok") { ex ->
-      val bytes = payload.toByteArray()
-      ex.sendResponseHeaders(200, bytes.size.toLong())
-      ex.responseBody.use { it.write(bytes) }
-    }
-    server.start()
-    try {
-      val url = "http://127.0.0.1:" + server.address.port + "/ok"
+    withServer(200, payload.toByteArray()) { port ->
+      val url = "http://127.0.0.1:$port/ok"
       val target = File.createTempFile("dsh-dl", ".bin")
       target.deleteOnExit()
       Downloader.downloadToFile(url, target, connectTimeoutMs = 5_000, readTimeoutMs = 5_000)
       assertEquals(payload, target.readText())
-    } finally {
-      server.stop(0)
     }
   }
 }
