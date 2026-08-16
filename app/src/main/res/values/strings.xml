@@ -7,6 +7,9 @@
   <string name="button_retry">Retry</string>
   <string name="button_check_update">Check for runtime updates</string>
   <string name="button_copy_log">Copy diagnostic log</string>
+  <string name="button_install_container">Install Ubuntu container</string>
+  <string name="container_install_done">Ubuntu container ready</string>
+  <string name="container_install_failed">Ubuntu container install failed</string>
   <string name="notif_log_copied">Diagnostic log copied</string>
   <string name="notif_log_copied_detail">%1$s lines copied to the clipboard — paste them into your bug report</string>
 

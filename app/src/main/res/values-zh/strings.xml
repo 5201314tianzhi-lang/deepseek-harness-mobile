@@ -7,6 +7,9 @@
   <string name="button_retry">重试</string>
   <string name="button_check_update">检查运行时更新</string>
   <string name="button_copy_log">复制诊断日志</string>
+  <string name="button_install_container">安装 Ubuntu 容器</string>
+  <string name="container_install_done">Ubuntu 容器已就绪</string>
+  <string name="container_install_failed">Ubuntu 容器安装失败</string>
   <string name="notif_log_copied">诊断日志已复制</string>
   <string name="notif_log_copied_detail">已复制 %1$s 行到剪贴板，请粘贴到问题反馈中</string>
 

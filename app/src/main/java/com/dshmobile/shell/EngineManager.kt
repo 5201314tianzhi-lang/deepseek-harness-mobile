@@ -430,6 +430,11 @@ class EngineManager(private val context: Context, private val pickToken: String?
     AppLog.log("engine", "node.canExecute=" + nodeBin.canExecute() +
       " hook.canExecute=" + File(preloadPath).canExecute() +
       " node.length=" + nodeBin.length() + " usr=" + usrDir.canRead() + "/" + usrDir.canExecute())
+    // Proot container runtime: extract proot + deps and install the bash
+    // wrapper routing agent shell commands into the Ubuntu container.
+    // Idempotent — cheap when already in place.
+    ProotRuntime(context, usrDir, File(ensureDshDataHome(), "workspace").apply { mkdirs() })
+      .ensureWrapper()
     val now = System.currentTimeMillis()
     // Process-level CAS: only one concurrent caller actually starts the engine
     // (device-observed EADDRINUSE on double start).

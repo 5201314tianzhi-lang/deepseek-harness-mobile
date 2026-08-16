@@ -594,11 +594,29 @@ class MainActivity : ComponentActivity() {
         )
       }
     }
+    val installContainer = Button(this).apply {
+      text = getString(R.string.button_install_container)
+      setOnClickListener {
+        isEnabled = false
+        Thread {
+          val ok = RootfsDownloader.install(this@MainActivity.applicationContext)
+          runOnUiThread {
+            isEnabled = true
+            engineStatus.text = if (ok) {
+              getString(R.string.container_install_done)
+            } else {
+              getString(R.string.container_install_failed)
+            }
+          }
+        }.start()
+      }
+    }
     guide.addView(engineStatus)
     guide.addView(progressText)
     guide.addView(openTermux)
     guide.addView(retry)
     guide.addView(update)
+    guide.addView(installContainer)
     guide.addView(copyLog)
     return guide
   }
