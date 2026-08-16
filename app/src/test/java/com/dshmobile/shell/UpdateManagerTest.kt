@@ -77,7 +77,9 @@ class UpdateManagerTest {
       result.set(it)
       // onStatus fires for every progress step (checking → failed); only the
       // final failure status releases the latch.
-      if (it.contains(ctx.getString(R.string.update_failed, ""))) latch.countDown()
+      if (it.contains(ctx.getString(R.string.update_failed, ""))) {
+        latch.countDown()
+      }
     }
     assertTrue("status must arrive", latch.await(20, TimeUnit.SECONDS))
     assertTrue(

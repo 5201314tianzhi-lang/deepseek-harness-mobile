@@ -19,7 +19,10 @@ class AndroidBridgeTest {
   fun `primary volume maps to external storage root`() {
     val uri = Uri.parse("content://com.android.externalstorage.documents/tree/primary%3AProjects")
     val path = AndroidBridge.resolvePickedPath(uri)
-    val root = android.os.Environment.getExternalStorageDirectory().absolutePath
+    val root =
+      android.os.Environment
+        .getExternalStorageDirectory()
+        .absolutePath
     assertEquals("$root/Projects", path)
   }
 
@@ -27,7 +30,10 @@ class AndroidBridgeTest {
   fun `primary volume with nested path maps fully`() {
     val uri = Uri.parse("content://com.android.externalstorage.documents/tree/primary%3ADocuments%2Fcode%2Fmy-app")
     val path = AndroidBridge.resolvePickedPath(uri)
-    val root = android.os.Environment.getExternalStorageDirectory().absolutePath
+    val root =
+      android.os.Environment
+        .getExternalStorageDirectory()
+        .absolutePath
     assertEquals("$root/Documents/code/my-app", path)
   }
 
