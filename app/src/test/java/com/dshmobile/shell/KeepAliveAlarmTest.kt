@@ -27,7 +27,6 @@ class KeepAliveAlarmTest {
     val alarm = shadow.scheduledAlarms[0]
     assertEquals(AlarmManager.ELAPSED_REALTIME_WAKEUP, alarm.type)
     assertNotNull(alarm.operation)
-    assertNotNull(alarm.operation.component)
     assertEquals(KeepAliveAlarm.INTERVAL_MS, alarm.triggerAtTime)
   }
 

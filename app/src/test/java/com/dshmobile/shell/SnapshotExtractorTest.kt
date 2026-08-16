@@ -4,6 +4,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -29,27 +30,36 @@ class SnapshotExtractorTest {
     TarArchiveOutputStream(out).use { tar ->
       tar.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU)
       for ((name, link, content) in entries) {
-        val entry = TarArchiveEntry(name)
-        if (link == "DIR") {
-          entry.setMode(0x1ED) // 0o755 — Kotlin has no octal literals
-          tar.putArchiveEntry(entry)
-          tar.closeArchiveEntry()
-        } else if (link == "SYM") {
-          entry.setLinkName(String(content, Charsets.UTF_8))
-          entry.setLinkFlag(TarArchiveEntry.LF_SYMLINK)
-          tar.putArchiveEntry(entry)
-          tar.closeArchiveEntry()
-        } else if (link == "HARD") {
-          entry.setLinkName(String(content, Charsets.UTF_8))
-          entry.setLinkFlag(TarArchiveEntry.LF_LINK)
-          tar.putArchiveEntry(entry)
-          tar.closeArchiveEntry()
-        } else {
-          entry.setSize(content.size.toLong())
-          entry.setMode(0x1ED) // 0o755 — Kotlin has no octal literals
-          tar.putArchiveEntry(entry)
-          tar.write(content)
-          tar.closeArchiveEntry()
+        when (link) {
+          "DIR" -> {
+            val entry = TarArchiveEntry(name)
+            entry.setMode(0x1ED) // 0o755 — Kotlin has no octal literals
+            tar.putArchiveEntry(entry)
+            tar.closeArchiveEntry()
+          }
+
+          "SYM" -> {
+            val entry = TarArchiveEntry(name, TarArchiveEntry.LF_SYMLINK)
+            entry.setLinkName(String(content, Charsets.UTF_8))
+            tar.putArchiveEntry(entry)
+            tar.closeArchiveEntry()
+          }
+
+          "HARD" -> {
+            val entry = TarArchiveEntry(name, TarArchiveEntry.LF_LINK)
+            entry.setLinkName(String(content, Charsets.UTF_8))
+            tar.putArchiveEntry(entry)
+            tar.closeArchiveEntry()
+          }
+
+          else -> {
+            val entry = TarArchiveEntry(name)
+            entry.setSize(content.size.toLong())
+            entry.setMode(0x1ED) // 0o755 — Kotlin has no octal literals
+            tar.putArchiveEntry(entry)
+            tar.write(content)
+            tar.closeArchiveEntry()
+          }
         }
       }
     }
