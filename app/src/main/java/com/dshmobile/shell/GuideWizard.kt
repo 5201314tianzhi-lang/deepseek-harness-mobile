@@ -579,8 +579,7 @@ class GuideWizard(
               .LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
-              )
-              .apply {
+              ).apply {
                 weight = 1f
               }
         }
@@ -688,8 +687,7 @@ class GuideWizard(
               .LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
-              )
-              .apply {
+              ).apply {
                 weight = 1f
               }
         }
