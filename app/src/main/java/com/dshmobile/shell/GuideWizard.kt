@@ -575,12 +575,14 @@ class GuideWizard(
         ScrollView(activity).apply {
           isFillViewport = true
           layoutParams =
-            LinearLayout.LayoutParams(
-              ViewGroup.LayoutParams.MATCH_PARENT,
-              0,
-            ).apply {
-              weight = 1f
-            }
+            LinearLayout
+              .LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+              )
+              .apply {
+                weight = 1f
+              }
         }
       scroll.addView(body)
       addView(scroll)
@@ -682,12 +684,14 @@ class GuideWizard(
         ScrollView(activity).apply {
           isFillViewport = true
           layoutParams =
-            LinearLayout.LayoutParams(
-              ViewGroup.LayoutParams.MATCH_PARENT,
-              0,
-            ).apply {
-              weight = 1f
-            }
+            LinearLayout
+              .LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+              )
+              .apply {
+                weight = 1f
+              }
         }
       scroll.addView(body)
       addView(scroll)
