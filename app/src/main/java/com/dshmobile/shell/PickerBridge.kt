@@ -54,7 +54,10 @@ class PickerBridge(
   fun handleFileChooser(filePathCallback: ValueCallback<Array<Uri>>): Boolean {
     this.filePathCallback?.onReceiveValue(null)
     this.filePathCallback = filePathCallback
-    filePicker.launch(emptyArray())
+    // ActivityResultRegistry.launch() must run on the main thread (newer
+    // androidx throws IllegalStateException otherwise); the JS bridge can
+    // reach us from a WebKit thread.
+    activity.runOnUiThread { filePicker.launch(emptyArray()) }
     return true
   }
 
@@ -85,11 +88,32 @@ class PickerBridge(
     }
     if (android.os.Environment.isExternalStorageManager()) {
       pendingPickCallback = callbackId
-      directoryPicker.launch(null)
+      // ActivityResultRegistry.launch() must run on the main thread; the JS
+      // bridge can reach us from a WebKit thread.
+      activity.runOnUiThread { directoryPicker.launch(null) }
       return
     }
     openAllFilesAccessSettings()
     onPermissionRequired()
+  }
+
+  /** Survive activity recreation: the in-flight pick callback would otherwise
+   *  be lost and the engine-side promise would never settle (the page then
+   *  re-opens the picker in a loop). Call from onSaveInstanceState. */
+  fun saveState(out: android.os.Bundle) {
+    pendingPickCallback?.let { out.putString(KEY_PENDING_CALLBACK, it) }
+  }
+
+  /** Restore the pending pick callback after recreation; the re-registered
+   *  ActivityResult launcher delivers the result to this instance. */
+  fun restoreState(saved: android.os.Bundle?) {
+    if (saved != null && pendingPickCallback == null) {
+      pendingPickCallback = saved.getString(KEY_PENDING_CALLBACK)
+    }
+  }
+
+  private companion object {
+    const val KEY_PENDING_CALLBACK = "dsh.pendingPickCallback"
   }
 
   /** Open the system All Files Access screen for this app. */

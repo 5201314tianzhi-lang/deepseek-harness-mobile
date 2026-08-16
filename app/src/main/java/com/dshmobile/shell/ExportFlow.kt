@@ -53,6 +53,10 @@ class ExportFlow(
         c.connectTimeout = 15_000
         c.readTimeout = 60_000
         c.requestMethod = "GET"
+        // Do not follow redirects: the engine is trusted, but a redirect
+        // target is not — it could smuggle arbitrary remote content into the
+        // user's Downloads folder.
+        c.instanceFollowRedirects = false
         if (c.responseCode != HttpURLConnection.HTTP_OK) {
           throw java.io.IOException("HTTP " + c.responseCode)
         }

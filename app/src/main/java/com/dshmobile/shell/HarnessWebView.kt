@@ -33,6 +33,10 @@ class HarnessWebView(
     get() = (activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
   private val exportLaunching = AtomicBoolean(false)
+  /** Set when the engine-source page failed to load (error page shown before
+   *  the engine answered); cleared on a successful load. Drives the
+   *  reload-if-failed policy instead of reloading on every show. */
+  private val loadFailed = AtomicBoolean(false)
   private var polyfillsJs: String? = null
 
   val view: WebView = WebView(activity).apply { id = android.view.View.generateViewId() }
@@ -85,11 +89,15 @@ class HarnessWebView(
       }
 
       override fun onReceivedError(view: WebView, errorCode: Int, description: String, failingUrl: String) {
-        if (EngineSource.isEngineSource(failingUrl)) onEngineError()
+        if (EngineSource.isEngineSource(failingUrl)) {
+          loadFailed.set(true)
+          onEngineError()
+        }
       }
 
       override fun onPageFinished(view: WebView, url: String) {
         super.onPageFinished(view, url)
+        if (EngineSource.isEngineSource(url)) loadFailed.set(false)
         pushSystemDark()
       }
     }
@@ -151,6 +159,13 @@ class HarnessWebView(
   fun goBack() = view.goBack()
 
   fun reload() = view.reload()
+
+  /** Reload only when the engine-source page failed to load earlier (error
+   *  page shown before the engine answered); healthy pages are never touched
+   *  so foreground returns and picker callbacks keep their page state. */
+  fun reloadIfFailed() {
+    if (loadFailed.get()) view.reload()
+  }
 
   /** Evaluate a bridge-delivery script on the main thread (post). */
   fun postScript(script: String) {

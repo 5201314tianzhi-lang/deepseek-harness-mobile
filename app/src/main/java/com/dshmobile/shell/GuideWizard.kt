@@ -105,9 +105,9 @@ class GuideWizard(
     }.start()
     webView.visibility = View.VISIBLE
     webView.animate().alpha(1f).setDuration(200).start()
-    // The WebView may have rendered an error page before the engine was
-    // ready (engine boot takes seconds); reload now that it answers.
-    webView.reload()
+    // NOTE: no reload here — MainActivity reloads only when the page had
+    // failed to load; a blanket reload on every show would discard the page
+    // state (and race picker callbacks) on each return to foreground.
     // Engine is up — keep the breathing dot visible a few seconds longer
     // (cold-start transition) before fading the bar away, so the pulse
     // animation is actually seen instead of vanishing immediately.
