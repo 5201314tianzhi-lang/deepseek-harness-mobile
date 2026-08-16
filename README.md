@@ -266,6 +266,16 @@ Release builds (CI) additionally pass:
   -PabiFilter=arm64-v8a                      # one ABI per matrix leg
 ```
 
+### Quality gate (CI)
+
+Every push to `main` and every PR runs `.github/workflows/ci.yml`:
+`./gradlew assembleDebug lintDebug ktlintCheck` — compile, Android lint
+(`abortOnError`, debug variant) and ktlint (android ruleset via
+`.editorconfig`) must all pass or the change is blocked. ktlint runs from
+Maven Central (`com.pinterest.ktlint:ktlint-cli`), not the plugin portal, so
+it works in CN networks too; auto-format with `./gradlew ktlintFormat`
+before committing.
+
 Build config: AGP 9.3.1, Kotlin 2.4.10, minSdk 26, targetSdk 34 (Android 15+
 app-data ELF exec restrictions are covered by the linker64 fallback). The
 extractor strips the write bit from executables (W^X: Huawei/EMUI refuse to
