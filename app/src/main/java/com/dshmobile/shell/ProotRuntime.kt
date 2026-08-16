@@ -74,17 +74,24 @@ class ProotRuntime(
     if (!ensureProot()) return false
     val bash = File(usrDir, "bin/bash")
     val termux = File(usrDir, "bin/bash.termux")
-    // Wrapper considered current when it already routes via proot AND carries
-    // the proot-dir LD_LIBRARY_PATH (libtalloc/libandroid-shmem live next to
-    // the binary, outside the snapshot's usr/lib); older installs are
-    // rewritten in place.
+    // Wrapper considered current when it routes via proot AND carries both
+    // markers added after the first release: the proot-dir LD_LIBRARY_PATH
+    // (libtalloc/libandroid-shmem live next to the binary, outside the
+    // snapshot's usr/lib) and PROOT_TMP_DIR (proot's own temp dir — the
+    // Termux build defaults to /data/data/com.termux/files/usr/tmp, which
+    // does not exist here, so glue-rootfs/f2fs-probe creation fails). Older
+    // installs are rewritten in place.
     val wrapperUpToDate = bash.isFile && termux.isFile &&
-      bash.readText(Charsets.US_ASCII).contains("LD_LIBRARY_PATH=")
+      bash.readText(Charsets.US_ASCII).contains("PROOT_TMP_DIR=")
     if (wrapperUpToDate) return true
     if (bash.isFile && !bash.readText(Charsets.US_ASCII).contains("#!")) {
       if (!bash.renameTo(termux)) return false
     }
     val sh = File(usrDir, "bin/sh").absolutePath
+    // Host-side temp dir: writable app storage. PROOT_TMP_DIR is proot's own
+    // scratch space (glue rootfs, f2fs probe, mkdtemp); the container-internal
+    // TMPDIR points at /tmp, which lives in the (writable) rootfs.
+    val hostTmp = File(context.filesDir, "home/tmp").apply { mkdirs() }.absolutePath
     val wrapper = """
       #!$sh
       if [ ! -x ${rootfsDir.absolutePath}/bin/bash ]; then
@@ -93,11 +100,15 @@ class ProotRuntime(
       fi
       LD_LIBRARY_PATH=${prootDir.absolutePath}:${'$'}LD_LIBRARY_PATH
       export LD_LIBRARY_PATH
+      PROOT_TMP_DIR=$hostTmp
+      export PROOT_TMP_DIR
+      TMPDIR=/tmp
+      export TMPDIR
       exec ${prootBin.absolutePath} -0 -r ${rootfsDir.absolutePath} \
         -b /proc -b /dev -b /sys \
         -b ${resolvConf().absolutePath}:/etc/resolv.conf \
         -b ${workspaceDir.absolutePath}:/root/workspace \
-        -w /root/workspace /bin/bash "\$@"
+        -w /root/workspace /bin/bash "${'$'}@"
     """.trimIndent()
     bash.writeText(wrapper)
     bash.setExecutable(true, true)
