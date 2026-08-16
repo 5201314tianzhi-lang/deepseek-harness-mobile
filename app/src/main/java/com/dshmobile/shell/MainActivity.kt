@@ -182,11 +182,6 @@ class MainActivity : ComponentActivity() {
     }.start()
   }
 
-  override fun onDestroy() {
-    super.onDestroy()
-    engineManager.stopEngine()
-  }
-
   override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
     super.onConfigurationChanged(newConfig)
     pushSystemDark(webView)
