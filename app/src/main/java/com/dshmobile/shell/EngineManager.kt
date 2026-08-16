@@ -55,12 +55,51 @@ class EngineManager(private val context: Context, private val pickToken: String?
       AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + usrDir.parentFile)
       SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
       homeDir.mkdirs()
+      diagnosePtyNode()
       AppLog.log("extract", "done")
       true
     } catch (t: Throwable) {
       Log.e(TAG, "snapshot extract failed", t)
       AppLog.log("extract", "FAILED", t)
       false
+    }
+  }
+
+  /**
+   * Diagnostic for "Failed to load native module: pty.node": report whether
+   * the module exists after extraction and probe dlopen from the Java side
+   * (System.load). The node-pty loader swallows the real dlopen error, so
+   * this is the only way to see whether the failure is a missing file, a
+   * linker rejection (deps/permissions/format) or a node-side ABI check.
+   */
+  private fun diagnosePtyNode() {
+    try {
+      val pty = File(
+        usrDir,
+        "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
+      )
+      AppLog.log("diag", "pty.node exists=" + pty.exists() + " size=" + pty.length() +
+        " canRead=" + pty.canRead() + " canExec=" + pty.canExecute())
+      if (pty.exists()) {
+        try {
+          System.load(pty.absolutePath)
+          AppLog.log("diag", "Java dlopen pty.node OK (linker accepts it)")
+        } catch (t: Throwable) {
+          AppLog.log("diag", "Java dlopen pty.node FAILED: " + t.message)
+        }
+      }
+      // Also mirror the module into prebuilds/android-arm64 (the loader's last
+      // fallback path) in case the build/Release require has a path quirk.
+      val prebuilt = File(pty.parentFile.parentFile.parentFile, "prebuilds/android-arm64/pty.node")
+      if (pty.isFile && !prebuilt.isFile) {
+        prebuilt.parentFile?.mkdirs()
+        pty.copyTo(prebuilt, overwrite = true)
+        prebuilt.setExecutable(true, true)
+        prebuilt.setWritable(false, false)
+        AppLog.log("diag", "mirrored pty.node -> " + prebuilt.absolutePath)
+      }
+    } catch (t: Throwable) {
+      AppLog.log("diag", "pty.node diagnostic failed", t)
     }
   }
 
