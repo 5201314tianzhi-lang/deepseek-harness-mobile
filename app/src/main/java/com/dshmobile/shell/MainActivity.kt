@@ -275,7 +275,6 @@ class MainActivity : ComponentActivity() {
           return@Thread
         }
         AppLog.log("boot", "container init: smoke test pass")
-        }
         // Step 3 — after any setup, the user launches the engine manually;
         // a fully provisioned install (snapshot + container) starts straight
         // into the Harness.
