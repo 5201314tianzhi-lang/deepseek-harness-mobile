@@ -80,18 +80,6 @@
   <!-- Shizuku -->
   <string name="shizuku_granted">Shizuku authorized (v%1$d) — keep-alive boost ready</string>
   <string name="shizuku_absent">Shizuku not running (optional: needed for background keep-alive boost)</string>
-  <!-- First-run consent -->
-  <string name="consent_title">Before you start</string>
-  <string name="consent_storage_title">Storage</string>
-  <string name="consent_storage">Install package ~79MB; the runtime extracts to ~484MB plus an ~35MB Ubuntu container — roughly 600MB of internal storage in total.</string>
-  <string name="consent_time_title">Time</string>
-  <string name="consent_time">First install takes 2-5 minutes (network and device dependent). Keep the app in the foreground until it finishes.</string>
-  <string name="consent_notes_title">What you should know</string>
-  <string name="consent_note_1">• Network is required — the Ubuntu container (~35MB) downloads from the official Ubuntu mirrors.</string>
-  <string name="consent_note_2">• After setup the engine keeps running in the background; its status is visible in the notification bar.</string>
-  <string name="consent_note_3">• Future launches skip the setup and open your workspace directly.</string>
-  <string name="consent_accept">Agree &amp; start</string>
-  <string name="consent_exit">Exit</string>
   <string name="update_in_progress">Update already running — wait for it to finish.</string>
   <string name="update_restart_hint">Restart the app to apply the new runtime.</string>
   <string name="button_keep_alive">Background keep-alive</string>

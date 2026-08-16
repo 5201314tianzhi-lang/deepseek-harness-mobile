@@ -16,9 +16,6 @@ web agent that can actually execute bash.
   the official Ubuntu mirrors on first run with SHA-256 verification) gives the
   agent a standard Linux environment: `apt`, system packages, root-like access.
   The agent's `bash` is routed into the container through a generated wrapper.
-- **First-run consent gate** — before anything installs, the app shows the
-  storage/time footprint and what to expect; the user must explicitly agree
-  (nothing downloads or extracts otherwise).
 - **Mobile UI** — white, three-step boot wizard (runtime → container → launch)
   over `http://127.0.0.1:3080`; external links are routed to the system browser,
   only engine-same-origin pages stay inside the WebView.
@@ -46,8 +43,8 @@ web agent that can actually execute bash.
 
 | Component | File | Responsibility |
 |---|---|---|
-| `MainActivity` | `app/src/main/java/com/dshmobile/shell/MainActivity.kt` | Orchestration: first-run consent, boot flow, engine start, exports, update trigger |
-| `GuideWizard` | `.../GuideWizard.kt` | White wizard UI: consent card, three steps, status card, cold-start top bar with pulse dot |
+| `MainActivity` | `app/src/main/java/com/dshmobile/shell/MainActivity.kt` | Orchestration: boot flow, engine start, exports, update trigger |
+| `GuideWizard` | `.../GuideWizard.kt` | White wizard UI: three steps, status card, cold-start top bar with pulse dot |
 | `HarnessWebView` | `.../HarnessWebView.kt` | WebView config, engine-source navigation gate, compat-polyfill injection, reload-if-failed policy |
 | `AndroidBridge` | `.../AndroidBridge.kt` | `window.androidBridge` JS interface (protocol v1) |
 | `PickerBridge` | `.../PickerBridge.kt` | SAF directory/file picking; pending callback survives activity recreation |
@@ -73,22 +70,17 @@ web agent that can actually execute bash.
 
 ### First-run flow (`MainActivity.onCreate`)
 
-1. **Consent gate** — on a fresh install the app shows the consent card
-   (storage ≈ 600MB: ~79MB APK + ~484MB runtime + ~35MB container; time 2-5 min;
-   what to expect). Nothing installs until "Agree & start"; "Exit" leaves the
-   page (the activity is finished only on explicit exit). Agreement is recorded
-   in `SharedPreferences` and survives upgrades.
-2. **Step 1 — runtime**: extract the embedded snapshot to `filesDir/usr`
+1. **Step 1 — runtime**: extract the embedded snapshot to `filesDir/usr`
    (progress shown), then
-3. **Step 2 — container** (mandatory): download the Ubuntu rootfs if missing
+2. **Step 2 — container** (mandatory): download the Ubuntu rootfs if missing
    (SHA-256 verified against `SHA256SUMS`), install proot + libtalloc +
    libandroid-shmem, generate the `usr/bin/bash` wrapper, and smoke-test the
    whole chain inside the container (`echo CONTAINER_OK; id`). A failing
    container counts as an engine-start failure.
-4. **Step 3 — launch**: the user presses "Launch engine"; the engine starts
+3. **Step 3 — launch**: the user presses "Launch engine"; the engine starts
    (`node --expose-internals <usr>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js
    web --port 3080`) and the page is polled for up to 60s.
-5. **Quick path** — when everything is already provisioned, the app cold-starts
+4. **Quick path** — when everything is already provisioned, the app cold-starts
    straight into the Harness under a thin status bar (breathing pulse dot,
    fades out 6s after the engine answers).
 

@@ -1,6 +1,6 @@
 # 壳 APK 设计（deepseek-harness-mobile）
 
-> v3.0 ｜ 2026-08-16 更新：与当前代码逐项对应（首次同意门、proot Ubuntu 容器、
+> v3.0 ｜ 2026-08-16 更新：与当前代码逐项对应（proot Ubuntu 容器、
 > 引擎生命周期归服务、进程级 token、解压/更新幂等）。审查/修复记录见 `docs/issues.md`。
 
 ---
@@ -11,9 +11,6 @@
   壳与引擎版本解耦（桥协议版本化 `androidBridge.version`）。
 - **自足运行时**：APK 内嵌 ~79MB xz 快照，首次安装解压出约 484MB
   （node + bash + coreutils + dsh + 插件）到 `filesDir/usr`，无需安装 Termux。
-- **首次知情同意门**：全新安装首次打开先展示存储/耗时/须知（≈600MB、2-5 分钟、
-  网络需求等），用户显式"同意并开始"后才进入安装流程；同意记录于
-  SharedPreferences，覆盖升级不重复。
 - **proot Ubuntu 容器（强制）**：agent 的 shell 走容器（Ubuntu 24.04 rootfs
   约 35MB，首次从官方源下载 + SHA256 校验）；容器冒烟失败 = 引擎启动失败。
 - **零侵入**：页面侧不改动；桥能力全部经 `@JavascriptInterface` 注入。
@@ -24,7 +21,7 @@
 
 ```
 MainActivity（编排）
- ├─ onCreate：同意门（consent_seen）→ startEngineFlow 或同意卡
+ ├─ onCreate：startEngineFlow()（首次安装 + 启动）
  ├─ startEngineFlow()：CAS 防并发
  │   ├─ EngineProbe.check() —— 127.0.0.1:3080 可达性
  │   ├─ EngineManager.extractSnapshot() —— 首次解压（第 1 步）
@@ -35,7 +32,7 @@ MainActivity（编排）
  ├─ ExportFlow —— 引擎同源下载 → MediaStore（禁重定向、200MB 上限）
  └─ pushSystemDark() —— 系统深色 → __dshThemeBridge.setDark
 
-GuideWizard（纯 UI）—— 同意卡、三步状态卡、动作行、顶部条（呼吸点）
+GuideWizard（纯 UI）—— 三步状态卡、动作行、顶部条（呼吸点）
 HarnessWebView —— WebView 配置、引擎源导航门、兼容层注入、loadFailed 标志
 PickerBridge —— SAF 目录/文件选择（主线程 launch、跨重建保留待决回调）
 AndroidBridge —— window.androidBridge JS 接口（协议 v1）
@@ -127,23 +124,20 @@ Android 15/16 上 `.sh` 脚本类工具仍受限（引擎核心为 node ELF，�
 ### 4.1 启动流程（MainActivity.startEngineFlow）
 
 1. 探测引擎；运行中 → `showWeb()`（仅当页面之前加载失败才 reload）。
-2. **同意门**（仅全新安装首次，`consent_seen` 未置位）：显示同意卡
-   （存储 ≈600MB、耗时 2-5 分钟、须知 3 条），"同意并开始" → 写标记 →
-   进入本流程；"退出应用" → finish。
-3. 第 1 步：未解压（`usr/bin/node` 不存在）→ 解压 + 进度反馈。
-4. 第 2 步（强制）：rootfs 缺失 → `RootfsDownloader.install()`（下载 + SHA256
+2. 第 1 步：未解压（`usr/bin/node` 不存在）→ 解压 + 进度反馈。
+3. 第 2 步（强制）：rootfs 缺失 → `RootfsDownloader.install()`（下载 + SHA256
    硬校验 + staging 原子切换）；`ProotRuntime.ensureInitialized()`（proot 三
    件套 + bash 包装）；`ContainerProbe.smokeTest()`（node → 包装 → proot →
    容器 bash，30s 受限等待）——失败即引擎启动失败。
-5. 第 3 步：就绪后由用户手动按"启动引擎"（`launchInFlight` CAS 防连点）；
+4. 第 3 步：就绪后由用户手动按"启动引擎"（`launchInFlight` CAS 防连点）；
    冷启动快速路径（快照+容器都已就绪）直进 Harness，顶部条覆盖（呼吸点，
    引擎应答后 6s 淡出）。
-6. `startEngine()`：注入 env 后 spawn；轮询探测最多 60s（冷启动 20–45s，
+5. `startEngine()`：注入 env 后 spawn；轮询探测最多 60s（冷启动 20–45s，
    冷却/并发让位的启动可越过 30s）→ 成功后拉起前台服务 + Shizuku 增强。
-7. 任一失败回落到引导页（错误可见：showGuide + showGuideError）。
+6. 任一失败回落到引导页（错误可见：showGuide + showGuideError）。
 
 `onCreate` 与 `onResume` 都触发本流程，`engineFlowRunning` CAS 防双线程
-解压/启动（设备实证：双启动导致引擎进程死亡）；`onResume` 另受同意门约束。
+解压/启动（设备实证：双启动导致引擎进程死亡）。
 
 ### 4.2 进程级并发控制（EngineManager companion）
 
@@ -344,4 +338,3 @@ SAF 目录选择本身无需权限（用户经系统选择器授权 tree URI）�
 | D9 引擎生命周期 | EngineService 唯一 owner；Activity 不杀引擎；看门狗总 arm | 消除"退出即杀 + 看门狗冷启动重拉"的双重浪费与死锁 |
 | D10 pick token | 进程级单例 | 服务重启引擎后桥不失配（静默失效的目录选择） |
 | D11 签名密钥 | 仅 secret，缺失即失败 | 公开 asset/现生成 = 任何人可伪造同签名更新包 |
-| D12 首次同意门 | 仅全新安装首次，SharedPreferences 记录 | 用户必须知情（存储/耗时/网络）后同意，不得自动进入安装 |

@@ -12,8 +12,6 @@
 - **Ubuntu 容器** — proot 驱动的 Ubuntu 24.04 rootfs（约 35MB，首次运行时从
   Ubuntu 官方源下载并做 SHA-256 校验），让 agent 获得标准 Linux 环境：
   `apt`、系统软件包、类 root 权限。agent 的 `bash` 经生成的包装脚本路由进容器。
-- **首次知情同意门** — 开始安装前展示存储/耗时占用与须知，用户必须明确同意
-  （否则不下载、不解压任何东西）。
 - **移动 UI** — 白色三步引导向导（运行时 → 容器 → 启动）访问
   `http://127.0.0.1:3080`；外部链接交给系统浏览器，仅引擎同源页面留在 WebView 内。
 - **保活** — 前台服务（`dataSync` 类型，带常驻通知）+ 5s 看门狗，引擎进程死亡
@@ -36,8 +34,8 @@
 
 | 组件 | 文件 | 职责 |
 |---|---|---|
-| `MainActivity` | `app/src/main/java/com/dshmobile/shell/MainActivity.kt` | 编排：首次同意、启动流程、引擎启动、导出、更新触发 |
-| `GuideWizard` | `.../GuideWizard.kt` | 白色向导 UI：同意卡、三步流程、状态卡、冷启动顶部条（呼吸点） |
+| `MainActivity` | `app/src/main/java/com/dshmobile/shell/MainActivity.kt` | 编排：启动流程、引擎启动、导出、更新触发 |
+| `GuideWizard` | `.../GuideWizard.kt` | 白色向导 UI：三步流程、状态卡、冷启动顶部条（呼吸点） |
 | `HarnessWebView` | `.../HarnessWebView.kt` | WebView 配置、引擎源导航门、兼容层注入、按需重载策略 |
 | `AndroidBridge` | `.../AndroidBridge.kt` | `window.androidBridge` JS 接口（协议 v1） |
 | `PickerBridge` | `.../PickerBridge.kt` | SAF 目录/文件选择；待决回调跨 Activity 重建保留 |
@@ -63,18 +61,14 @@
 
 ### 首次启动流程（`MainActivity.onCreate`）
 
-1. **同意门** — 全新安装首次打开时展示同意卡（存储 ≈600MB：~79MB APK + ~484MB
-   运行时 + ~35MB 容器；耗时 2-5 分钟；相关须知）。未点"同意并开始"前不安装
-   任何东西；"退出应用"停留在页面（仅显式点击才 finish）。同意记录在
-   `SharedPreferences`，覆盖升级不重复打扰。
-2. **第 1 步 — 运行时**：解压内嵌快照到 `filesDir/usr`（显示进度），然后
-3. **第 2 步 — 容器**（强制）：缺失时下载 Ubuntu rootfs（对 `SHA256SUMS` 校验），
+1. **第 1 步 — 运行时**：解压内嵌快照到 `filesDir/usr`（显示进度），然后
+2. **第 2 步 — 容器**（强制）：缺失时下载 Ubuntu rootfs（对 `SHA256SUMS` 校验），
    安装 proot + libtalloc + libandroid-shmem，生成 `usr/bin/bash` 包装，并对
    整条链路做容器内冒烟测试（`echo CONTAINER_OK; id`）。容器失败 = 引擎启动失败。
-4. **第 3 步 — 启动**：用户按"启动引擎"；启动
+3. **第 3 步 — 启动**：用户按"启动引擎"；启动
    `node --expose-internals <usr>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080`，
    轮询探测最多 60s。
-5. **快速路径** — 快照与容器都已就绪时，应用冷启动直接进入 Harness，上方覆盖
+4. **快速路径** — 快照与容器都已就绪时，应用冷启动直接进入 Harness，上方覆盖
    细状态条（呼吸点，引擎应答后 6s 淡出）。
 
 流程受 in-flight CAS 标志保护（`onCreate` 与 `onResume` 都会触发；双线程并发

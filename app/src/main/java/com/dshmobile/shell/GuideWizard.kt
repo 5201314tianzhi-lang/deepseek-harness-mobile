@@ -35,9 +35,6 @@ class GuideWizard(
   private var errorText: TextView? = null
   private var statusCard: LinearLayout? = null
   private var actionRow: LinearLayout? = null
-  private var consentBlock: LinearLayout? = null
-  private var consentAccept: Button? = null
-  private var consentExit: Button? = null
   private var keepAliveBlock: LinearLayout? = null
   private var keepAliveText: TextView? = null
   private var spacer: View? = null
@@ -427,9 +424,8 @@ class GuideWizard(
     card.addView(errorBlock)
     statusCard = card
 
-    // First-run consent card: replaces the status card until the user
-    // agrees to the storage/time/notes and the install work begins.
-    consentBlock = buildConsentCard().also { it.visibility = View.GONE }
+    // First-run consent card is removed (no consent gate); keep-alive panel
+    // remains hidden until requested.
     keepAliveBlock = buildKeepAliveCard().also { it.visibility = View.GONE }
 
     // Actions: one primary (launch / retry) + secondary utilities.
@@ -486,136 +482,11 @@ class GuideWizard(
     guide.addView(buildStepIndicator())
     guide.addView(spacer)
     guide.addView(card)
-    guide.addView(consentBlock)
     guide.addView(keepAliveBlock)
     guide.addView(actions)
     return guide
   }
 
-  /** First-run consent: storage estimate, time estimate, what the user
-   *  should know, and explicit Agree / Exit. Nothing installs until the
-   *  accept callback fires (the caller gates the whole engine flow on it). */
-  private fun buildConsentCard(): LinearLayout {
-    val section = { text: String ->
-      TextView(activity).apply {
-        setText(text)
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
-        textSize = 14f
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-        setPadding(0, (12 * d).toInt(), 0, 0)
-      }
-    }
-    val line = { text: String ->
-      TextView(activity).apply {
-        setText(text)
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
-        textSize = 13f
-        setPadding(0, (6 * d).toInt(), 0, 0)
-      }
-    }
-    val body =
-      LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
-      }
-    body.addView(
-      TextView(activity).apply {
-        setText(activity.getString(R.string.consent_title))
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
-        textSize = 17f
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-      },
-    )
-    body.addView(section(activity.getString(R.string.consent_storage_title)))
-    body.addView(line(activity.getString(R.string.consent_storage)))
-    body.addView(section(activity.getString(R.string.consent_time_title)))
-    body.addView(line(activity.getString(R.string.consent_time)))
-    body.addView(section(activity.getString(R.string.consent_notes_title)))
-    body.addView(line(activity.getString(R.string.consent_note_1)))
-    body.addView(line(activity.getString(R.string.consent_note_2)))
-    body.addView(line(activity.getString(R.string.consent_note_3)))
-    val buttons =
-      LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
-      }
-    val accept = accentButton(activity.getString(R.string.consent_accept))
-    consentAccept = accept
-    val exit =
-      ghostButton(activity.getString(R.string.consent_exit)).apply {
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
-      }
-    consentExit = exit
-    val sep = (10 * d).toInt()
-    accept.layoutParams =
-      LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-        bottomMargin = sep
-      }
-    exit.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-    buttons.addView(accept)
-    buttons.addView(exit)
-    return LinearLayout(activity).apply {
-      orientation = LinearLayout.VERTICAL
-      background = activity.getDrawable(com.dshmobile.shell.R.drawable.card_bg)
-      layoutParams =
-        LinearLayout
-          .LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
-          ).apply {
-            weight = 1f
-            topMargin = (40 * d).toInt()
-            leftMargin = (8 * d).toInt()
-            rightMargin = (8 * d).toInt()
-          }
-      // Text scrolls; the Agree/Exit buttons stay pinned to the card bottom so
-      // they are always reachable (a WRAP_CONTENT card in the fixed LinearLayout
-      // pushed them off-screen and the user could not agree at all).
-      val scroll =
-        ScrollView(activity).apply {
-          isFillViewport = true
-          layoutParams =
-            LinearLayout
-              .LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-              ).apply {
-                weight = 1f
-              }
-        }
-      scroll.addView(body)
-      addView(scroll)
-      addView(buttons)
-    }
-  }
-
-  /** Replace the status card with the consent card. The accept callback is
-   *  wired lazily so the wizard itself never owns the flow decision. */
-  fun showConsent(
-    accept: () -> Unit,
-    exit: () -> Unit,
-  ) {
-    consentAccept?.setOnClickListener {
-      hideConsent()
-      accept()
-    }
-    consentExit?.setOnClickListener { exit() }
-    spacer?.visibility = View.GONE
-    consentBlock?.visibility = View.VISIBLE
-    statusCard?.visibility = View.GONE
-    actionRow?.visibility = View.GONE
-  }
-
-  /** Back to the normal status card / action row. */
-  fun hideConsent() {
-    spacer?.visibility = View.VISIBLE
-    consentBlock?.visibility = View.GONE
-    statusCard?.visibility = View.VISIBLE
-    actionRow?.visibility = View.VISIBLE
-  }
-
-  /** Keep-alive settings panel: battery-optimization exemption + Shizuku
-   *  appops boost, with a live status line refreshed by the caller. */
   private fun buildKeepAliveCard(): LinearLayout {
     val title =
       TextView(activity).apply {

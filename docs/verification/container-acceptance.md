@@ -2,8 +2,8 @@
 
 Setup: fresh install of the APK from the v0.1.0 release (arm64-v8a).
 
-1. First open shows the **consent card** (storage ≈600MB / time 2-5 min /
-   notes) — nothing installs before "Agree & start". Tap it.
+1. First open goes straight into the install flow (no consent gate): the
+   wizard shows "Preparing your workspace…" / "Extracting runtime…".
 2. Step 1: snapshot extracts (progress on the wizard).
 3. Step 2 (mandatory): boot shows "Install Ubuntu container" → AppLog shows
    "rootfs downloading ..." then "rootfs installed"; the container chain is
