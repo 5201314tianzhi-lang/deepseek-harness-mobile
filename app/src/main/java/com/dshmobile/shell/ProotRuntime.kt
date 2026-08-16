@@ -26,7 +26,9 @@ class ProotRuntime(
     val f = File(context.filesDir, "etc/resolv.conf")
     if (!f.isFile) {
       f.parentFile?.mkdirs()
-      f.writeText("nameserver 8.8.8.8\nnameserver 223.5.5.5\n")
+      // AliDNS first: reachable in CN networks, where 8.8.8.8 would stall
+      // every first lookup. Google DNS kept as a secondary.
+      f.writeText("nameserver 223.5.5.5\nnameserver 8.8.8.8\n")
     }
     return f
   }
@@ -53,7 +55,11 @@ class ProotRuntime(
         target.outputStream().use { out -> input.copyTo(out) }
       }
       target.setExecutable(exec, true)
-      if (!exec) target.setWritable(false, false) // W^X policy
+      // W^X: proot AND its shared libs must not stay writable — Huawei/EMUI
+      // refuse to exec (and mmap PROT_EXEC) a writable file, so a left-writable
+      // proot binary makes the whole container chain fail on those devices
+      // (mirrors SnapshotExtractor's write-bit strip on the snapshot ELFs).
+      target.setWritable(false, false)
       true
     } catch (t: Throwable) {
       AppLog.log("proot", "extract failed: $name", t)
@@ -63,12 +69,22 @@ class ProotRuntime(
 
   /** Extract proot + its shared libs from assets. True when the binary works. */
   fun ensureProot(): Boolean {
-    if (prootBin.isFile && prootBin.length() > 0L) return true
+    val talloc = File(prootDir, "libtalloc.so.2")
+    val shmem = File(prootDir, "libandroid-shmem.so")
+    // All three must be present: a partial extraction (interrupted) that left
+    // proot but missed a lib would otherwise pass the short-circuit and then
+    // fail at exec time with a confusing dynamic-loader error.
+    if (prootBin.isFile && prootBin.length() > 0L &&
+      talloc.isFile && talloc.length() > 0L &&
+      shmem.isFile && shmem.length() > 0L
+    ) {
+      return true
+    }
     val ok = extractAsset("proot", prootBin, exec = true)
-    val talloc = extractAsset("libtalloc.so.2", File(prootDir, "libtalloc.so.2"), exec = false)
-    val shmem = extractAsset("libandroid-shmem.so", File(prootDir, "libandroid-shmem.so"), exec = false)
-    AppLog.log("proot", "ensureProot executable=$ok libtalloc=$talloc shmem=$shmem")
-    return ok && talloc && shmem
+    val tallocOk = extractAsset("libtalloc.so.2", talloc, exec = false)
+    val shmemOk = extractAsset("libandroid-shmem.so", shmem, exec = false)
+    AppLog.log("proot", "ensureProot executable=$ok libtalloc=$tallocOk shmem=$shmemOk")
+    return ok && tallocOk && shmemOk
   }
 
   /** Full container initialization: proot runtime + deps + bash wrapper
@@ -112,7 +128,7 @@ class ProotRuntime(
     val wrapper =
       """
       #!$sh
-      if [ ! -x ${rootfsDir.absolutePath}/${DshPaths.ROOTFS_BASH} ]; then
+      if [ ! -x "${rootfsDir.absolutePath}/${DshPaths.ROOTFS_BASH}" ]; then
         echo "Ubuntu container not installed" >&2
         exit 127
       fi
@@ -122,10 +138,10 @@ class ProotRuntime(
       export PROOT_TMP_DIR
       TMPDIR=/tmp
       export TMPDIR
-      exec ${prootBin.absolutePath} -0 -r ${rootfsDir.absolutePath} \
+      exec "${prootBin.absolutePath}" -0 -r "${rootfsDir.absolutePath}" \
         -b /proc -b /dev -b /sys \
-        -b ${resolvConf().absolutePath}:/etc/resolv.conf \
-        -b ${workspaceDir.absolutePath}:/root/projects \
+        -b "${resolvConf().absolutePath}:/etc/resolv.conf" \
+        -b "${workspaceDir.absolutePath}:/root/projects" \
         -w /root/projects /bin/bash "${'$'}@"
       """.trimIndent()
     bash.writeText(wrapper)

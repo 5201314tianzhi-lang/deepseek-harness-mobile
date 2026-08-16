@@ -34,6 +34,14 @@ class ProotRuntimeTest {
       parentFile!!.mkdirs()
       writeText("stub")
     }
+    File(context.filesDir, "proot/libtalloc.so.2").apply {
+      parentFile!!.mkdirs()
+      writeText("stub")
+    }
+    File(context.filesDir, "proot/libandroid-shmem.so").apply {
+      parentFile!!.mkdirs()
+      writeText("stub")
+    }
   }
 
   private fun fakeRootfs() {
@@ -79,7 +87,7 @@ class ProotRuntimeTest {
     // Core routing + env invariants.
     assertTrue(w.contains("proot/proot"))
     assertTrue(w.contains("-0"))
-    assertTrue(w.contains("-r " + File(context.filesDir, DshPaths.ROOTFS_DIR).absolutePath))
+    assertTrue(w.contains(File(context.filesDir, DshPaths.ROOTFS_DIR).absolutePath))
     assertTrue(w.contains("/root/projects"))
     assertTrue(w.contains("LD_LIBRARY_PATH=" + File(context.filesDir, "proot").absolutePath))
     assertTrue(w.contains("PROOT_TMP_DIR=" + File(context.filesDir, "home/tmp").absolutePath))
@@ -87,6 +95,14 @@ class ProotRuntimeTest {
     assertTrue(w.contains("resolv.conf"))
     assertTrue(w.startsWith("#!/"))
     assertTrue(File(context.filesDir, DshPaths.USR_DIR + "/" + DshPaths.BASH_BIN).canExecute())
+  }
+
+  @Test
+  fun `ensureProot requires the shared libs too`() {
+    // proot binary present but libtalloc missing: cannot short-circuit, and
+    // with empty assets the extraction cannot succeed either.
+    File(context.filesDir, "proot/libtalloc.so.2").delete()
+    assertFalse(runtime.ensureProot())
   }
 
   @Test

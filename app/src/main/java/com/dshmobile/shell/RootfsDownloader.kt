@@ -35,11 +35,13 @@ object RootfsDownloader {
     }
   }
 
+  /** Ubuntu base release arch name: the device ABI is `x86_64`, but Ubuntu
+   *  names that architecture `amd64` in its tarball/checksum files. */
   private fun abi(context: Context): String? {
     val abis = android.os.Build.SUPPORTED_ABIS
     return when {
       abis.any { it.startsWith("arm64") } -> "arm64"
-      abis.any { it.startsWith("x86_64") } -> "x86_64"
+      abis.any { it.startsWith("x86_64") } -> "amd64"
       else -> null
     }
   }
