@@ -43,4 +43,6 @@ jobs:
           ls -lh app/src/main/assets/snapshot.tar.xz
 
       - name: Quality gate
-        run: ./gradlew assembleDebug lintDebug ktlintCheck
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug lintDebug ktlintCheck
