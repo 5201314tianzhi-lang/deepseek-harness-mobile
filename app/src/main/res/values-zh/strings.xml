@@ -82,4 +82,16 @@
   <!-- Shizuku -->
   <string name="shizuku_granted">Shizuku 已授权（v%1$d）——保活增强就绪</string>
   <string name="shizuku_absent">Shizuku 未运行（可选：后台保活增强需要它）</string>
+  <!-- First-run consent -->
+  <string name="consent_title">开始前请先了解</string>
+  <string name="consent_storage_title">占用空间</string>
+  <string name="consent_storage">安装包约 79MB；运行时解压约 484MB，另加约 35MB 的 Ubuntu 容器——合计约 600MB 内部存储空间。</string>
+  <string name="consent_time_title">预计耗时</string>
+  <string name="consent_time">首次安装约需 2-5 分钟（视网速与设备性能）。请保持应用在前台，直至安装完成。</string>
+  <string name="consent_notes_title">您需要知道</string>
+  <string name="consent_note_1">• 需要网络：Ubuntu 容器（约 35MB）将从 Ubuntu 官方源下载。</string>
+  <string name="consent_note_2">• 安装完成后引擎会在后台运行，状态可在通知栏查看。</string>
+  <string name="consent_note_3">• 后续打开无需重复安装，直接进入工作界面。</string>
+  <string name="consent_accept">同意并开始</string>
+  <string name="consent_exit">退出应用</string>
 </resources>

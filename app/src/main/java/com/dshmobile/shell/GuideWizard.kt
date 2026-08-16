@@ -32,6 +32,11 @@ class GuideWizard(
   private var backButton: Button? = null
   private var errorBlock: LinearLayout? = null
   private var errorText: TextView? = null
+  private var statusCard: LinearLayout? = null
+  private var actionRow: LinearLayout? = null
+  private var consentBlock: LinearLayout? = null
+  private var consentAccept: Button? = null
+  private var consentExit: Button? = null
   private var stepDots: Array<TextView> = emptyArray()
   private var stepLabels: Array<TextView> = emptyArray()
   private var topPulseDot: View? = null
@@ -339,6 +344,11 @@ class GuideWizard(
     }
     card.addView(cardBody)
     card.addView(errorBlock)
+    statusCard = card
+
+    // First-run consent card: replaces the status card until the user
+    // agrees to the storage/time/notes and the install work begins.
+    consentBlock = buildConsentCard().also { it.visibility = View.GONE }
 
     // Actions: one primary (launch / retry) + secondary utilities.
     val primary = accentButton(activity.getString(R.string.button_launch_engine)).apply {
@@ -365,6 +375,7 @@ class GuideWizard(
         rightMargin = (8 * d).toInt()
       }
     }
+    actionRow = actions
     actions.addView(primary)
     actions.addView(update)
     actions.addView(copyLog)
@@ -380,8 +391,100 @@ class GuideWizard(
     guide.addView(buildStepIndicator())
     guide.addView(spacer)
     guide.addView(card)
+    guide.addView(consentBlock)
     guide.addView(actions)
     return guide
+  }
+
+  /** First-run consent: storage estimate, time estimate, what the user
+   *  should know, and explicit Agree / Exit. Nothing installs until the
+   *  accept callback fires (the caller gates the whole engine flow on it). */
+  private fun buildConsentCard(): LinearLayout {
+    val section = { text: String ->
+      TextView(activity).apply {
+        setText(text)
+        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
+        textSize = 14f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        setPadding(0, (12 * d).toInt(), 0, 0)
+      }
+    }
+    val line = { text: String ->
+      TextView(activity).apply {
+        setText(text)
+        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
+        textSize = 13f
+        setPadding(0, (6 * d).toInt(), 0, 0)
+      }
+    }
+    val body = LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
+    }
+    body.addView(TextView(activity).apply {
+      setText(activity.getString(R.string.consent_title))
+      setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
+      textSize = 17f
+      typeface = android.graphics.Typeface.DEFAULT_BOLD
+    })
+    body.addView(section(activity.getString(R.string.consent_storage_title)))
+    body.addView(line(activity.getString(R.string.consent_storage)))
+    body.addView(section(activity.getString(R.string.consent_time_title)))
+    body.addView(line(activity.getString(R.string.consent_time)))
+    body.addView(section(activity.getString(R.string.consent_notes_title)))
+    body.addView(line(activity.getString(R.string.consent_note_1)))
+    body.addView(line(activity.getString(R.string.consent_note_2)))
+    body.addView(line(activity.getString(R.string.consent_note_3)))
+    val buttons = LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
+    }
+    val accept = accentButton(activity.getString(R.string.consent_accept))
+    consentAccept = accept
+    val exit = ghostButton(activity.getString(R.string.consent_exit)).apply {
+      setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
+    }
+    consentExit = exit
+    val sep = (10 * d).toInt()
+    accept.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      bottomMargin = sep
+    }
+    exit.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    buttons.addView(accept)
+    buttons.addView(exit)
+    return LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      background = activity.getDrawable(com.dshmobile.shell.R.drawable.card_bg)
+      layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+      ).apply {
+        topMargin = (40 * d).toInt()
+        leftMargin = (8 * d).toInt()
+        rightMargin = (8 * d).toInt()
+      }
+      addView(body)
+      addView(buttons)
+    }
+  }
+
+  /** Replace the status card with the consent card. The accept callback is
+   *  wired lazily so the wizard itself never owns the flow decision. */
+  fun showConsent(accept: () -> Unit, exit: () -> Unit) {
+    consentAccept?.setOnClickListener {
+      hideConsent()
+      accept()
+    }
+    consentExit?.setOnClickListener { exit() }
+    consentBlock?.visibility = View.VISIBLE
+    statusCard?.visibility = View.GONE
+    actionRow?.visibility = View.GONE
+  }
+
+  /** Back to the normal status card / action row. */
+  fun hideConsent() {
+    consentBlock?.visibility = View.GONE
+    statusCard?.visibility = View.VISIBLE
+    actionRow?.visibility = View.VISIBLE
   }
 
   /** Horizontal three-step indicator (runtime → container → launch). */

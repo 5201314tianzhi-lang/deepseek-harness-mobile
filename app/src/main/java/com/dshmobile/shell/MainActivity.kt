@@ -51,7 +51,21 @@ class MainActivity : ComponentActivity() {
     )
   }
 
-  /** Debug-only update trigger (see onCreate); derived from the package so
+  /** First-run consent: once agreed it is never shown again (survives
+   *  upgrades; cleared on uninstall). Gated via SharedPreferences. */
+  private val consentSeen: Boolean
+    get() = getSharedPreferences("dsh_prefs", Context.MODE_PRIVATE).getBoolean("consent_seen", false)
+
+  private fun markConsentSeen() {
+    try {
+      getSharedPreferences("dsh_prefs", Context.MODE_PRIVATE)
+        .edit().putBoolean("consent_seen", true).apply()
+    } catch (_: Exception) {
+      // Best effort: a failed write only re-shows the consent page once.
+    }
+  }
+
+  /** Testable update trigger (see onCreate); derived from the package so
    *  a package rename never leaves a stale action literal. */
   private val actionUpdate: String get() = packageName + ".action.UPDATE"
 
@@ -128,8 +142,20 @@ class MainActivity : ComponentActivity() {
       // intent and trigger the download+execute chain — accept it only in
       // debug builds and ignore it in release.
       if (isDebuggable) runUpdate()
-    } else {
+    } else if (consentSeen) {
       startEngineFlow()
+    } else {
+      // First run: nothing installs until the user sees the storage/time
+      // notice and explicitly agrees (never auto-starts the setup).
+      harness.view.visibility = View.GONE
+      wizard.guideView.visibility = View.VISIBLE
+      wizard.showConsent(
+        accept = {
+          markConsentSeen()
+          startEngineFlow()
+        },
+        exit = { finish() },
+      )
     }
   }
 
@@ -141,6 +167,7 @@ class MainActivity : ComponentActivity() {
     // report "not running" and force a reload losing page state on every
     // return to foreground. Move it to a background thread.
     Thread {
+      if (!consentSeen) return@Thread
       val running = EngineProbe.check().optBoolean("running", false)
       if (!running) startEngineFlow()
     }.start()
