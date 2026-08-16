@@ -265,7 +265,7 @@ class MainActivity : ComponentActivity() {
         }
         AppLog.log("boot", "container init: proot runtime=" + proot.ensureInitialized() +
           " rootfs=" + proot.rootfsReady())
-        val smoke = containerProbe().smokeTest()
+        val smoke = containerProbe.smokeTest()
         if (smoke != null) {
           AppLog.log("boot", "container init FAILED: " + smoke)
           runOnUiThread {
