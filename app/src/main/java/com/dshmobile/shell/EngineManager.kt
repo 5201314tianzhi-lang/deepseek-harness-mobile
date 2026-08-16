@@ -33,6 +33,11 @@ class EngineManager(private val context: Context, private val pickToken: String?
   private val nodeBin = File(usrDir, "bin/node")
   private val dshBin = File(usrDir, "lib/node_modules/@deepseek-ai/dsh/lib/bin.js")
 
+  /** System library found by [probePtyNodeInNode] that provides the missing
+   *  _Unwind_Resume symbol; added to the engine LD_PRELOAD (null = none). */
+  @Volatile
+  private var unwindLib: String? = null
+
   val engineReady: Boolean get() = nodeBin.exists()
 
   /**
@@ -79,27 +84,72 @@ class EngineManager(private val context: Context, private val pickToken: String?
         "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
       )
       if (!pty.isFile) return
-      val script = "try{require(" + org.json.JSONObject.quote(pty.absolutePath) +
-        ");console.log('NODE_PTY_OK')}catch(e){console.log('NODE_PTY_FAIL: '+e.message)}"
-      val env = mapOf(
-        "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
-        "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
-        "HOME" to homeDir.absolutePath,
-        "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
-      ) + opensslConfEnv()
-      val pb = ProcessBuilder(
-        "/system/bin/linker64", nodeBin.absolutePath, "-e", script,
-      ).also { b ->
-        b.environment().putAll(env)
-        b.redirectErrorStream(true)
-      }
-      val proc = pb.start()
-      val out = proc.inputStream.bufferedReader().readText()
-      val code = try { proc.waitFor() } catch (_: Exception) { -1 }
-      AppLog.log("diag", "node pty probe exit=" + code + " output: " + out.trim().take(2000))
+      resolveUnwindLib(pty)
     } catch (t: Throwable) {
       AppLog.log("diag", "node pty probe failed to run", t)
     }
+  }
+
+  /**
+   * Find a library that makes pty.node loadable (cached in [unwindLib]).
+   * The snapshot's libc++_shared.so exports __cxa_* but not the unwind
+   * runtime (_Unwind_Resume), so dlopen fails; system libraries differ per
+   * Android version/vendor, so probe them and LD_PRELOAD whichever works.
+   */
+  private fun resolveUnwindLib(pty: File): String? {
+    if (unwindLib != null) return unwindLib
+    for (candidate in unwindCandidates()) {
+      val (code, out) = probePtyNode(pty, candidate)
+      AppLog.log("diag", "node pty probe (preload=" + (candidate ?: "none") + ") exit=" + code +
+        " output: " + out.trim().take(300))
+      if (out.contains("NODE_PTY_OK")) {
+        unwindLib = candidate
+        if (candidate != null) {
+          AppLog.log("diag", "pty.node loads with preload=" + candidate)
+        }
+        return unwindLib
+      }
+    }
+    return null
+  }
+
+  /**
+   * Candidates that may provide the missing C++ unwind symbol
+   * (_Unwind_Resume): the snapshot's libc++_shared.so exports __cxa_* but not
+   * the unwind runtime (Termux links it statically), so dlopen of pty.node
+   * fails on every device. System libraries differ per Android version/vendor,
+   * so probe them at runtime and LD_PRELOAD whichever makes the module load.
+   */
+  private fun unwindCandidates(): List<String?> {
+    return listOf(
+      null,
+      "/system/lib64/libgcc.so",
+      "/system/lib64/libc++.so",
+      "/system/lib64/libc++_shared.so",
+      "/system/lib64/libunwind.so",
+    )
+  }
+
+  private fun probePtyNode(pty: File, preload: String?): Pair<Int, String> {
+    val script = "try{require(" + org.json.JSONObject.quote(pty.absolutePath) +
+      ");console.log('NODE_PTY_OK')}catch(e){console.log('NODE_PTY_FAIL: '+e.message)}"
+    val env = mapOf(
+      "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
+      "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
+      "HOME" to homeDir.absolutePath,
+      "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
+    ) + opensslConfEnv()
+    val pb = ProcessBuilder(
+      "/system/bin/linker64", nodeBin.absolutePath, "-e", script,
+    ).also { b ->
+      b.environment().putAll(env)
+      if (preload != null) b.environment()["LD_PRELOAD"] = preload
+      b.redirectErrorStream(true)
+    }
+    val proc = pb.start()
+    val out = proc.inputStream.bufferedReader().readText()
+    val code = try { proc.waitFor() } catch (_: Exception) { -1 }
+    return code to out
   }
 
   /**
@@ -374,7 +424,21 @@ class EngineManager(private val context: Context, private val pickToken: String?
       val args = arrayOf(
         nodeBin.absolutePath, "--expose-internals", dshBin.absolutePath, "web", "--port", port.toString(),
       )
-      val env = mapOf(
+    // LD_PRELOAD: the exec-reroute hook plus (when found) the system library
+    // that provides _Unwind_Resume for native modules like node-pty. Every
+    // process loaded via linker64 inherits it, so child execs are rerouted
+    // across the whole engine tree. The snapshot's termux-exec variant
+    // additionally needs the TERMUX_EXEC__* env (see termuxExecEnv above).
+    val ptyNode = File(
+      usrDir,
+      "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
+    )
+    val unwind = if (ptyNode.isFile) resolveUnwindLib(ptyNode) else null
+    val preloadValue = if (unwind != null) preloadPath + ":" + unwind else preloadPath
+    if (unwind != null) {
+      AppLog.log("engine", "LD_PRELOAD += " + unwind)
+    }
+    val env = mapOf(
         "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
         "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
         "HOME" to homeDir.absolutePath,
@@ -396,7 +460,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
         // linker64 inherits it, so child execs are rerouted across the whole
         // engine tree. The snapshot's termux-exec variant additionally needs
         // the TERMUX_EXEC__* env (see termuxExecEnv above).
-        "LD_PRELOAD" to preloadPath,
+        "LD_PRELOAD" to preloadValue,
         "TERMUX__ROOTFS" to usrDir.parentFile.absolutePath,
         "TERMUX__PREFIX" to usrDir.absolutePath,
         "TERMUX_APP__DATA_DIR" to context.filesDir.parentFile.absolutePath,
