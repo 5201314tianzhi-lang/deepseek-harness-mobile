@@ -21,8 +21,16 @@ android {
     // be writable) — handled in SnapshotExtractor by stripping the write bit
     // from extracted executables.
     targetSdk = 34
-    versionCode = 1
-    versionName = "0.1.0"
+    // Version comes from the release tag in CI (-PversionName/-PversionCode,
+    // e.g. v0.1.0 -> 0.1.0 / 100); local builds keep the defaults.
+    versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+    versionName = (project.findProperty("versionName") as String?) ?: "0.1.0"
+    // One ABI per CI matrix leg (-PabiFilter=arm64-v8a); local builds keep
+    // all ABIs so the universal libexec-hook.so works everywhere.
+    val abiFilter = project.findProperty("abiFilter") as String?
+    if (abiFilter != null) {
+      ndk { abiFilters += abiFilter }
+    }
   }
 
   androidResources {

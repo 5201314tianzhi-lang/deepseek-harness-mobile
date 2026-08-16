@@ -76,10 +76,16 @@ jobs:
         id: tag
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ github.ref_name }}"
           else
-            echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ inputs.version }}"
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Monotonic versionCode from the tag: v0.1.0 -> 100, v0.2.0 -> 200
+          VER="${TAG#v}"
+          CODE=$(echo "$VER" | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+          echo "version_name=$VER" >> "$GITHUB_OUTPUT"
+          echo "version_code=$CODE" >> "$GITHUB_OUTPUT"
 
       - name: Download runtime snapshot (${{ matrix.abi }}) from upstream releases
         env:
@@ -89,31 +95,25 @@ jobs:
           asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/tags/v0.10.4 \
             --jq '.assets[] | select(.name == "${{ matrix.snapshot_asset }}") | .url')
           [ -n "$asset_url" ] || { echo "${{ matrix.snapshot_asset }} not found upstream"; exit 1; }
-          curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+          curl -sfL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
             "$asset_url" -o app/src/main/assets/snapshot.tar.xz
           ls -lh app/src/main/assets/snapshot.tar.xz
 
       - name: Get CI signing key
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
         run: |
-          # Prefer the keystore in repo secrets (stable across every build and
-          # not tied to a release asset); fall back to the release asset, and
-          # only generate+upload as a last resort.
-          if [ -n "$RELEASE_KEYSTORE_B64" ]; then
-            echo "$RELEASE_KEYSTORE_B64" | base64 -d > release.keystore
-            echo "using keystore from repo secret"
-          elif gh release download v0.1.0 -R "${{ github.repository }}" \
-              -p release.keystore -D . --clobber 2>/dev/null; then
-            echo "using keystore from release asset"
-          else
-            keytool -genkeypair -v -keystore release.keystore -alias release \
-              -keyalg RSA -keysize 2048 -validity 10000 -storepass android \
-              -keypass android -dname "CN=dsh-mobile, OU=ci, O=dsh, L=cn, S=cn, C=cn"
-            gh release upload v0.1.0 -R "${{ github.repository }}" release.keystore --clobber
-            echo "generated and uploaded new keystore"
+          # The keystore MUST come from the repo secret — never fall back to a
+          # release asset or a freshly generated key: both would hand out (or
+          # rotate) the production signing key publicly, letting anyone forge
+          # an update with the same signature. Missing secret = hard fail.
+          if [ -z "$RELEASE_KEYSTORE_B64" ]; then
+            echo "RELEASE_KEYSTORE_B64 secret not set; refusing to build without a stable signing key" >&2
+            exit 1
           fi
+          echo "$RELEASE_KEYSTORE_B64" | base64 -d > release.keystore
+          keytool -list -keystore release.keystore -storepass android -alias release >/dev/null 2>&1 \
+            || { echo "keystore secret is not valid (alias 'release', storepass 'android')" >&2; exit 1; }
           ls -la release.keystore
 
       - name: Package proot runtime (${{ matrix.abi }})
@@ -127,9 +127,9 @@ jobs:
           fi
           BASE="https://packages.termux.dev/apt/termux-main/pool/main"
           mkdir -p /tmp/proot && cd /tmp/proot
-          curl -sL -o proot.deb "$BASE/p/proot/proot_5.1.107.91_${ABI}.deb"
-          curl -sL -o talloc.deb "$BASE/libt/libtalloc/libtalloc_2.4.3_${ABI}.deb"
-          curl -sL -o shmem.deb "$BASE/liba/libandroid-shmem/libandroid-shmem_0.7_${ABI}.deb"
+          curl -sfL -o proot.deb "$BASE/p/proot/proot_5.1.107.91_${ABI}.deb"
+          curl -sfL -o talloc.deb "$BASE/libt/libtalloc/libtalloc_2.4.3_${ABI}.deb"
+          curl -sfL -o shmem.deb "$BASE/liba/libandroid-shmem/libandroid-shmem_0.7_${ABI}.deb"
           mkdir -p x && for d in proot talloc shmem; do
             ar x $d.deb && tar -xf data.tar.xz -C x && rm -f data.tar.xz
           done
@@ -221,7 +221,10 @@ jobs:
       - name: Build release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew assembleRelease \
+            -PversionName="${{ steps.tag.outputs.version_name }}" \
+            -PversionCode=${{ steps.tag.outputs.version_code }} \
+            -PabiFilter=${{ matrix.abi }}
 
       - name: Rename APK
         run: |
@@ -259,6 +262,7 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
+          update_release: true
           body: |
             DeepSeek Harness Android shell APK ${{ steps.tag.outputs.tag }}
             - arm64-v8a: for ARM64 phones/tablets

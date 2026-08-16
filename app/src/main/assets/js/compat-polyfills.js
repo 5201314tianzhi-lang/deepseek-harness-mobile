@@ -18,8 +18,20 @@
     if (!AbortSignal.any) {
       AbortSignal.any = function (signals) {
         var c = new AbortController();
-        var abort = function () { c.abort(); };
         signals = signals || [];
+        var abort = function () {
+          // Propagate the first source's abort reason when available; the
+          // native behavior forwards it, and consumers (e.g. the directory
+          // picker) branch on it.
+          var reason = undefined;
+          for (var i = 0; i < signals.length; i++) {
+            if (signals[i] && signals[i].aborted) {
+              if (signals[i].reason !== undefined) { reason = signals[i].reason; }
+              break;
+            }
+          }
+          c.abort(reason);
+        };
         for (var i = 0; i < signals.length; i++) {
           if (signals[i].aborted) { abort(); break; }
           signals[i].addEventListener('abort', abort);
@@ -120,7 +132,15 @@
             return out;
           }
           if (v instanceof ArrayBuffer) return v.slice(0);
-          if (ArrayBuffer.isView(v)) return new v.constructor(v);
+          if (ArrayBuffer.isView(v)) {
+            // DataView has no (view) constructor — it needs (buffer, offset,
+            // length); other views copy through their constructor. Keep the
+            // byte region, matching structuredClone semantics for views.
+            if (typeof DataView !== 'undefined' && v instanceof DataView) {
+              return new DataView(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
+            }
+            return new v.constructor(v);
+          }
           out = {};
           seen.set(v, out);
           Object.keys(v).forEach(function (k) { out[k] = clone(v[k]); });
@@ -137,10 +157,14 @@
   }
   if (typeof Object.groupBy === 'undefined') {
     Object.groupBy = function (items, fn) {
-      var out = {};
+      // Null-prototype accumulator: a "__proto__" (or "constructor") group key
+      // must not walk into Object.prototype and pollute shared prototypes —
+      // the spec builds an OrdinaryObjectCreate(null) for exactly this reason.
+      var out = Object.create(null);
       items.forEach(function (item, i) {
         var k = String(fn(item, i));
-        (out[k] || (out[k] = [])).push(item);
+        if (!Object.prototype.hasOwnProperty.call(out, k)) out[k] = [];
+        out[k].push(item);
       });
       return out;
     };

@@ -28,16 +28,32 @@
 #include <unistd.h>
 
 #define LINKER "/system/bin/linker64"
-#define LINKER_LEN (sizeof(LINKER) - 1)
 
+/* Expected ELF machine for this build's ABI: a cross-arch ELF (e.g. an
+ * arm64 binary on an x86_64 device) must NOT be rerouted through linker64 —
+ * it could never load there, and the native exec path is the only one that
+ * could possibly handle it. */
+#if defined(__aarch64__)
+#define EXPECTED_EM 183 /* EM_AARCH64 */
+#elif defined(__x86_64__)
+#define EXPECTED_EM 62 /* EM_X86_64 */
+#else
+#define EXPECTED_EM 0
+#endif
+
+/* ELF check with ABI match. O_NONBLOCK: PATH search may hit a FIFO — a
+ * blocking open would hang the whole exec call chain (the native exec path
+ * fails such files immediately with EACCES). */
 static int is_elf(const char *path) {
-  unsigned char magic[4];
-  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  unsigned char hdr[20];
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
   if (fd < 0) return 0;
-  ssize_t n = read(fd, magic, sizeof(magic));
+  ssize_t n = read(fd, hdr, sizeof(hdr));
   close(fd);
-  return n == 4 && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' &&
-         magic[3] == 'F';
+  if (n != (ssize_t)sizeof(hdr)) return 0;
+  if (hdr[0] != 0x7f || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F') return 0;
+  unsigned short em = (unsigned short)(hdr[18] | (hdr[19] << 8));
+  return em == EXPECTED_EM;
 }
 
 /* execve(LINKER, [LINKER, path, argv[0], argv[1], ...], envp). The linker
@@ -45,6 +61,10 @@ static int is_elf(const char *path) {
  * original argv is preserved verbatim. */
 static int exec_via_linker(const char *path, char *const argv[],
                            char *const envp[]) {
+  /* POSIX allows execv(path, NULL) (the kernel treats it as an empty argv);
+   * the rerouted argv must be well-formed too. */
+  char *const empty_argv[] = { NULL };
+  if (!argv) argv = empty_argv;
   size_t argc = 0;
   while (argv[argc]) argc++;
   char **new_argv = (char **)malloc((argc + 3) * sizeof(char *));
@@ -61,18 +81,15 @@ static int exec_via_linker(const char *path, char *const argv[],
 }
 
 /* Returns 1 when the caller should fall through to the original syscall,
- * 0 when the reroute already ran (success never returns; failure keeps the
- * linker's errno unless it is ENOENT/EACCES, in which case we fall through so
- * the kernel gets a chance — e.g. a writable-executable file the vendor W^X
- * rejects might still be exec'd directly after the write bit was stripped). */
+ * 0 when the reroute already ran. Every reroute failure falls through: the
+ * linker can reject binaries the kernel would still exec (no PT_INTERP,
+ * corrupt ELF), so the native syscall always gets a chance — the original
+ * errno is lost, but the fallback keeps such execs working at all. */
 static int maybe_reroute(const char *path, char *const argv[],
                          char *const envp[]) {
-  if (!path || strncmp(path, LINKER, LINKER_LEN) == 0) return 1;
+  if (!path || strcmp(path, LINKER) == 0) return 1;
   if (!is_elf(path)) return 1;
-  if (exec_via_linker(path, argv, envp) == -1 && errno != ENOENT &&
-      errno != EACCES) {
-    return 0;
-  }
+  exec_via_linker(path, argv, envp);
   return 1;
 }
 

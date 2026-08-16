@@ -20,6 +20,14 @@
       android:exported="false"
       android:foregroundServiceType="dataSync" />
 
+    <!-- Shizuku keep-alive bridge: must be declared and exported for the
+         Shizuku service to deliver the binder (dev.rikka.shizuku:provider). -->
+    <provider
+      android:name="rikka.shizuku.ShizukuProvider"
+      android:authorities="${applicationId}.shizuku"
+      android:exported="true"
+      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
     <activity
       android:name=".MainActivity"
       android:exported="true"
