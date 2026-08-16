@@ -1,7 +1,7 @@
 # Proot Ubuntu Container — Design
 
 Date: 2026-08-16
-Status: Approved (design review), pending spec review
+Status: Implemented (pending on-device acceptance)
 
 ## 1. Background
 
