@@ -279,6 +279,9 @@ class EngineManager(private val context: Context, private val pickToken: String?
   /** Path of the active exec hook (for the container smoke test); null = none. */
   val execHookPath: String? get() = execHook()?.first
 
+  /** OPENSSL_CONF for the snapshot's own config (same env the engine uses). */
+  fun opensslConfEnv(): Map<String, String> = unwindResolver.opensslConfEnv()
+
   /** Start the dsh web engine from the embedded snapshot. */
   fun startEngine(port: Int = 3080): Boolean {
     val hook = execHook()

@@ -17,6 +17,7 @@ class ContainerProbe(
   private val homeDir: File,
   private val nodeBin: File,
   private val execHookPath: String?,
+  private val opensslConfEnv: Map<String, String>,
 ) {
 
   /** Returns null on success, or the combined output tail on failure. */
@@ -31,7 +32,7 @@ class ContainerProbe(
         "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
         "HOME" to homeDir.absolutePath,
         "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
-      )
+      ) + opensslConfEnv
       val pb = ProcessBuilder("/system/bin/linker64", nodeBin.absolutePath, "-e", script).also { b ->
         b.environment().putAll(env)
         if (execHookPath != null) b.environment()["LD_PRELOAD"] = execHookPath

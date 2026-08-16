@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
       engineManager.homeDir,
       engineManager.nodeBin,
       engineManager.execHookPath,
+      engineManager.opensslConfEnv(),
     )
   }
 
