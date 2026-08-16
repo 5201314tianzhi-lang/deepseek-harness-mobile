@@ -56,12 +56,49 @@ class EngineManager(private val context: Context, private val pickToken: String?
       SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
       homeDir.mkdirs()
       diagnosePtyNode()
+      probePtyNodeInNode()
       AppLog.log("extract", "done")
       true
     } catch (t: Throwable) {
       Log.e(TAG, "snapshot extract failed", t)
       AppLog.log("extract", "FAILED", t)
       false
+    }
+  }
+
+  /**
+   * Probe pty.node loading inside the real node environment (same env as the
+   * engine): Java's System.load cannot represent it (no LD_LIBRARY_PATH, no
+   * node symbols). This reports the actual error node-pty's loader swallows —
+   * missing dependency vs NAPI/ABI mismatch vs loader path issue.
+   */
+  private fun probePtyNodeInNode() {
+    try {
+      val pty = File(
+        usrDir,
+        "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node",
+      )
+      if (!pty.isFile) return
+      val script = "try{require(" + org.json.JSONObject.quote(pty.absolutePath) +
+        ");console.log('NODE_PTY_OK')}catch(e){console.log('NODE_PTY_FAIL: '+e.message)}"
+      val env = mapOf(
+        "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
+        "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
+        "HOME" to homeDir.absolutePath,
+        "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
+      ) + opensslConfEnv()
+      val pb = ProcessBuilder(
+        "/system/bin/linker64", nodeBin.absolutePath, "-e", script,
+      ).also { b ->
+        b.environment().putAll(env)
+        b.redirectErrorStream(true)
+      }
+      val proc = pb.start()
+      val out = proc.inputStream.bufferedReader().readText()
+      val code = try { proc.waitFor() } catch (_: Exception) { -1 }
+      AppLog.log("diag", "node pty probe exit=" + code + " output: " + out.trim().take(2000))
+    } catch (t: Throwable) {
+      AppLog.log("diag", "node pty probe failed to run", t)
     }
   }
 
