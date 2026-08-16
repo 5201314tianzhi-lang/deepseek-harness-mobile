@@ -75,7 +75,9 @@ class UpdateManagerTest {
     val latch = CountDownLatch(1)
     manager.checkAndApply {
       result.set(it)
-      latch.countDown()
+      // onStatus fires for every progress step (checking → failed); only the
+      // final failure status releases the latch.
+      if (it.contains(ctx.getString(R.string.update_failed, ""))) latch.countDown()
     }
     assertTrue("status must arrive", latch.await(20, TimeUnit.SECONDS))
     assertTrue(

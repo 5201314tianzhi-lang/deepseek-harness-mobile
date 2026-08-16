@@ -41,6 +41,9 @@ class ShizukuSupportTest {
       result.set(it)
       latch.countDown()
     }
+    // The absent-path report is posted to the main-thread handler; Robolectric
+    // does not run it until the looper is idled.
+    org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
     assertTrue("callback must fire", latch.await(5, java.util.concurrent.TimeUnit.SECONDS))
     assertTrue(result.get()!!.isNotEmpty())
   }

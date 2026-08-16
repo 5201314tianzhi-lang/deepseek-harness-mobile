@@ -45,7 +45,7 @@ jobs:
       - name: Quality gate
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug lintDebug ktlintCheck testDebugUnitTest
+          ./gradlew assembleDebug lintDebug ktlintCheck testDebugUnitTest --stacktrace
 
       - name: Run local JS/C tests
         run: ./tests/run-local.sh
