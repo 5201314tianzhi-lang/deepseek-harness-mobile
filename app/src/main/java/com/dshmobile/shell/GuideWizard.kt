@@ -156,7 +156,7 @@ class GuideWizard(
     }
   }
 
-  override fun onDestroy() {
+  fun onDestroy() {
     stopTopBarPulse()
   }
 

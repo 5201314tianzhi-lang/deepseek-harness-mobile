@@ -69,7 +69,8 @@ class MainActivity : ComponentActivity() {
       this,
       onDirectoryPicked = { callbackId, path ->
         harness.postScript(
-          "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", " + jsString(path) + ")",
+          "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", " +
+            (path?.let { jsString(it) } ?: "null") + ")",
         )
       },
       onPermissionRequired = { harness.postScript("window.__dshBridge?.onPermissionRequired?.()") },
