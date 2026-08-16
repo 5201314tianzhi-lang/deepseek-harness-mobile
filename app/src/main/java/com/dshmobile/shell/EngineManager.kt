@@ -220,7 +220,7 @@ class EngineManager(private val context: Context) {
     if (!src.isDirectory || dst.exists()) return
     dst.parentFile?.mkdirs()
     if (!src.renameTo(dst)) {
-      copyTree(src, dst, emptySet())
+      copyTree(src, dst)
       src.deleteRecursively()
     }
     try {
@@ -231,13 +231,12 @@ class EngineManager(private val context: Context) {
   }
 
   /** Recursively copy a directory tree (real file contents). */
-  private fun copyTree(src: File, dst: File, skip: Set<String>) {
+  private fun copyTree(src: File, dst: File) {
     src.listFiles()?.forEach { f ->
-      if (f.name in skip) return@forEach
       val target = File(dst, f.name)
       if (f.isDirectory) {
         target.mkdirs()
-        copyTree(f, target, skip)
+        copyTree(f, target)
       } else {
         f.copyTo(target, overwrite = true)
       }
@@ -357,10 +356,6 @@ class EngineManager(private val context: Context) {
         // os.tmpdir() falls back to the baked-in Termux tmp on Android
         // (unwritable from the app domain); keep spill inside filesDir.
         "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
-        // LD_PRELOAD: the exec-reroute hook. Every process loaded via
-        // linker64 inherits it, so child execs are rerouted across the whole
-        // engine tree. The snapshot's termux-exec variant additionally needs
-        // the TERMUX_EXEC__* env (see termuxExecEnv above).
         "LD_PRELOAD" to preloadValue,
         "TERMUX__ROOTFS" to usrDir.parentFile.absolutePath,
         "TERMUX__PREFIX" to usrDir.absolutePath,
@@ -449,15 +444,6 @@ class EngineManager(private val context: Context) {
       null
     }
   }
-
-  /** OPENSSL_CONF env override: point at the snapshot's own config when it
-   *  exists (the compiled-in Termux path is unreadable from this package).
-   *  Returns a single-entry map or an empty map.
-   *
-   *  NOTE: the archive entries carry a usr/ prefix and are extracted into
-   *  filesDir (usrDir.parentFile), so the file lives at filesDir/usr/etc/... —
-   *  the candidates below are relative to usrDir and must NOT repeat "usr".
-   */
 
   /** Stop the engine process (best-effort). Guarded by the start CAS so a
    *  concurrent start cannot race a destroy-then-null. */

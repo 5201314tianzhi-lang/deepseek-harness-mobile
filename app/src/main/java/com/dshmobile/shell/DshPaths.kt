@@ -15,6 +15,13 @@ object DshPaths {
   /** Rootfs root under filesDir (rootfs/). */
   const val ROOTFS_DIR = "rootfs"
 
+  /** Agent workspace inside the container: /root/projects (host-backed by
+   *  Documents/dshdata/projects through the proot bind mount). */
+  const val CONTAINER_PROJECTS = "root/projects"
+
+  /** Host-side projects directory (inside the public dshdata). */
+  const val PROJECTS_DIR = "projects"
+
   /** Node executable inside the snapshot. */
   const val NODE_BIN = "bin/node"
 

@@ -16,9 +16,9 @@ Setup: fresh install of the APK from the v0.1.0 release (arm64-v8a).
 6. `id` → expect `uid=0(root)` (fake root via -0).
 7. `apt-get update && apt-get install -y git nodejs python3` → expect success.
 8. `git --version && node --version && python3 --version` → versions printed.
-9. `pwd` → `/root/workspace`; create a file there,
-   verify it appears in host `Documents/dshdata/workspace`.
+9. `pwd` → `/root/projects` (pre-created workspace); create a file there,
+   verify it appears in host `Documents/dshdata/projects`.
 10. Container failure path: delete `files/rootfs` (adb run-as), reopen the app
     → reinstall flow runs, engine does NOT start until the smoke test passes.
-11. Regression: directory pick (workspace), session export, check update —
+11. Regression: directory pick, session export, check update —
     after the 2026-08-16 hardening pass (lifecycle/pickToken/reload changes).

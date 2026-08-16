@@ -120,6 +120,15 @@ trigger it; a double-threaded extract/start would kill the engine process).
   inaccessible) and `TMPDIR` (container temp).
 - `ContainerProbe` runs the exact agent chain (node → wrapper → proot → container
   bash) with a bounded 30s wait; failure = engine start failure.
+- **Pre-provisioned workspace**: `/root/projects` (the agent's working
+  directory, host-backed by `Documents/dshdata/projects`) is created with the
+  container.
+- **China mirror sources preconfigured** (once, editable): apt → Tsinghua
+  TUNA (Aliyun alternative commented), pip → TUNA PyPI, npm → npmmirror,
+  cargo → TUNA sparse registry, Go → goproxy.cn, RubyGems → TUNA, Composer →
+  Aliyun, conda → TUNA. All written to each manager's standard config
+  location, so they take effect immediately when the manager is installed —
+  nothing needs setup after `apt install`.
 
 ### Storage layout
 

@@ -99,6 +99,12 @@
   `TMPDIR`（容器内临时目录）。
 - `ContainerProbe` 以受限 30s 超时跑完整 agent 链路（node → 包装 → proot →
   容器 bash）；失败 = 引擎启动失败。
+- **预置工作区**：`/root/projects`（agent 工作目录，宿主侧对应
+  `Documents/dshdata/projects`）随容器创建。
+- **国内镜像源预置**（一次性写入，可改）：apt → 清华 TUNA（备选阿里注释）、
+  pip → TUNA PyPI、npm → npmmirror、cargo → TUNA sparse、Go → goproxy.cn、
+  RubyGems → TUNA、Composer → 阿里、conda → TUNA。全部写入各包管理器标准
+  配置位置，装好后立即生效——无需任何额外设置。
 
 ### 存储布局
 

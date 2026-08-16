@@ -291,7 +291,7 @@ class MainActivity : ComponentActivity() {
         // in-container command. A failing container counts as an engine start
         // failure — the engine is not started without it. Every sub-step is
         // logged under boot: so the container init is visible in diagnostics.
-        val proot = ProotRuntime(this, engineManager.usrDir, File(engineManager.ensureDshDataHome(), "workspace"))
+        val proot = ProotRuntime(this, engineManager.usrDir, File(engineManager.ensureDshDataHome(), DshPaths.PROJECTS_DIR))
         if (!proot.rootfsReady()) {
           runOnUiThread {
             wizard.renderSteps(1, 1)

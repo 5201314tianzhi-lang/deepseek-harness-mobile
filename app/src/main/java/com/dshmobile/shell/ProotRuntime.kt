@@ -70,7 +70,9 @@ class ProotRuntime(
   /** Full container initialization: proot runtime + deps + bash wrapper
    *  (idempotent). Rootfs presence is checked separately (rootfsReady). */
   fun ensureInitialized(): Boolean {
-    return ensureProot() && ensureWrapper()
+    val ok = ensureProot() && ensureWrapper()
+    applyMirrors() // best-effort: never blocks the engine on mirror config
+    return ok
   }
 
   /**
@@ -81,6 +83,7 @@ class ProotRuntime(
    */
   fun ensureWrapper(): Boolean {
     if (!ensureProot()) return false
+    workspaceDir.mkdirs() // host side of the /root/projects bind mount
     val bash = File(usrDir, DshPaths.BASH_BIN)
     val termux = File(usrDir, DshPaths.BASH_BIN + ".termux")
     // Wrapper considered current when it routes via proot AND carries both
@@ -91,7 +94,7 @@ class ProotRuntime(
     // does not exist here, so glue-rootfs/f2fs-probe creation fails). Older
     // installs are rewritten in place.
     val wrapperUpToDate = bash.isFile && termux.isFile &&
-      bash.readText(Charsets.US_ASCII).contains("PROOT_TMP_DIR=")
+      bash.readText(Charsets.US_ASCII).contains("/root/projects")
     if (wrapperUpToDate) return true
     if (bash.isFile && !bash.readText(Charsets.US_ASCII).contains("#!")) {
       if (!bash.renameTo(termux)) return false
@@ -116,12 +119,110 @@ class ProotRuntime(
       exec ${prootBin.absolutePath} -0 -r ${rootfsDir.absolutePath} \
         -b /proc -b /dev -b /sys \
         -b ${resolvConf().absolutePath}:/etc/resolv.conf \
-        -b ${workspaceDir.absolutePath}:/root/workspace \
-        -w /root/workspace /bin/bash "${'$'}@"
+        -b ${workspaceDir.absolutePath}:/root/projects \
+        -w /root/projects /bin/bash "${'$'}@"
     """.trimIndent()
     bash.writeText(wrapper)
     bash.setExecutable(true, true)
     AppLog.log("proot", "bash wrapper installed -> " + bash.absolutePath)
     return true
+  }
+
+  /**
+   * Pre-provision the container for smooth out-of-the-box use (once, guarded
+   * by a marker file so user edits to the mirror configs survive):
+   *  - /root/projects workspace directory (host-backed by the bind mount)
+   *  - China mirror sources for every major package manager, in their
+   *    STANDARD config locations — they take effect the moment the manager
+   *    is installed (apt, pip, npm, cargo, go, gem, composer, conda), no
+   *    user setup needed.
+   */
+  private fun applyMirrors() {
+    if (!rootfsReady()) return
+    val rootfs = rootfsDir
+    val marker = File(rootfs, "etc/dsh-mirrors-applied")
+    if (marker.isFile) return
+    try {
+      File(rootfs, DshPaths.CONTAINER_PROJECTS).mkdirs()
+      // apt (Ubuntu 24.04 deb822) -> Tsinghua TUNA; Aliyun kept as a comment
+      // for manual switching.
+      write(File(rootfs, "etc/apt/sources.list.d/ubuntu.sources"), """
+        |Types: deb
+        |URIs: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
+        |Suites: noble noble-updates noble-backports noble-security
+        |Components: main restricted universe multiverse
+        |Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+        |
+        |# Alternative: Aliyun
+        |# Types: deb
+        |# URIs: https://mirrors.aliyun.com/ubuntu/
+        |# Suites: noble noble-updates noble-backports noble-security
+        |# Components: main restricted universe multiverse
+        |# Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+        |""".trimMargin()
+      )
+      write(File(rootfs, "etc/pip.conf"), """
+        |[global]
+        |index-url = https://pypi.tuna.tsinghua.edu.cn/simple
+        |trusted-host = pypi.tuna.tsinghua.edu.cn
+        |""".trimMargin()
+      )
+      write(File(rootfs, "etc/npmrc"), """
+        |registry=https://registry.npmmirror.com
+        |""".trimMargin()
+      )
+      write(File(rootfs, "root/.cargo/config.toml"), """
+        |[source.crates-io]
+        |replace-with = 'tuna'
+        |
+        |[source.tuna]
+        |registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
+        |""".trimMargin()
+      )
+      write(File(rootfs, "etc/profile.d/dsh-mirrors.sh"), """
+        |export GOPROXY=https://goproxy.cn,direct
+        |export GO111MODULE=on
+        |""".trimMargin()
+      )
+      write(File(rootfs, "root/.bashrc"), """
+        |export GOPROXY=https://goproxy.cn,direct
+        |export GO111MODULE=on
+        |""".trimMargin()
+      )
+      write(File(rootfs, "root/.gemrc"), """
+        |---
+        |:sources:
+        |- https://mirrors.tuna.tsinghua.edu.cn/rubygems/
+        |""".trimMargin()
+      )
+      write(File(rootfs, "root/.config/composer/config.json"), """
+        |{
+        |  "repositories": [
+        |    { "type": "composer", "url": "https://mirrors.aliyun.com/composer/" }
+        |  ]
+        |}
+        |""".trimMargin()
+      )
+      write(File(rootfs, "root/.condarc"), """
+        |channels:
+        |  - defaults
+        |show_channel_urls: true
+        |default_channels:
+        |  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+        |  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
+        |custom_channels:
+        |  conda-forge: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud
+        |""".trimMargin()
+      )
+      marker.writeText("1")
+      AppLog.log("proot", "mirror configs + /root/projects applied to rootfs")
+    } catch (t: Throwable) {
+      AppLog.log("proot", "mirror config apply failed", t)
+    }
+  }
+
+  private fun write(file: File, content: String) {
+    file.parentFile?.mkdirs()
+    file.writeText(content)
   }
 }
