@@ -141,33 +141,32 @@ jobs:
                   hdr = bytes(data[pos:pos + 60])
                   size = int(hdr[48:58].decode().rstrip(), 10)
                   start = pos + 60
-                  m = data[start:start + size]
-                  if len(m) >= 64 and m[:4] == b'\x7fELF':
-                      e_shoff = struct.unpack_from('<Q', m, 40)[0]
-                      e_shentsize = struct.unpack_from('<H', m, 58)[0]
-                      e_shnum = struct.unpack_from('<H', m, 60)[0]
+                  if len(data) >= start + 64 and data[start:start + 4] == b'\x7fELF':
+                      e_shoff = struct.unpack_from('<Q', data, start + 40)[0]
+                      e_shentsize = struct.unpack_from('<H', data, start + 58)[0]
+                      e_shnum = struct.unpack_from('<H', data, start + 60)[0]
                       symtab_off = symtab_size = strtab_idx = None
                       for i in range(e_shnum):
-                          off = e_shoff + i * e_shentsize
-                          shtype = struct.unpack_from('<I', m, off + 4)[0]
+                          off = start + e_shoff + i * e_shentsize
+                          shtype = struct.unpack_from('<I', data, off + 4)[0]
                           if shtype == 2:
-                              symtab_off = struct.unpack_from('<Q', m, off + 24)[0]
-                              symtab_size = struct.unpack_from('<Q', m, off + 32)[0]
-                              strtab_idx = struct.unpack_from('<I', m, off + 40)[0]
+                              symtab_off = struct.unpack_from('<Q', data, off + 24)[0]
+                              symtab_size = struct.unpack_from('<Q', data, off + 32)[0]
+                              strtab_idx = struct.unpack_from('<I', data, off + 40)[0]
                       if symtab_off is not None and strtab_idx is not None:
-                          soff = e_shoff + strtab_idx * e_shentsize
-                          strtab_off = struct.unpack_from('<Q', m, soff + 24)[0]
-                          strtab_size = struct.unpack_from('<Q', m, soff + 32)[0]
+                          soff = start + e_shoff + strtab_idx * e_shentsize
+                          strtab_off = struct.unpack_from('<Q', data, soff + 24)[0]
+                          strtab_size = struct.unpack_from('<Q', data, soff + 32)[0]
                           for k in range(symtab_size // 24):
-                              so = symtab_off + k * 24
-                              st_name = struct.unpack_from('<I', m, so)[0]
-                              st_other = m[so + 5]
-                              bind = m[so + 4] >> 4
+                              so = start + symtab_off + k * 24
+                              st_name = struct.unpack_from('<I', data, so)[0]
+                              st_other = data[so + 5]
+                              bind = data[so + 4] >> 4
                               if st_other and bind == 1:
-                                  end = m.find(b'\0', strtab_off + st_name, strtab_off + strtab_size)
-                                  name = bytes(m[strtab_off + st_name:end]).decode('latin1')
+                                  end = data.find(b'\0', start + strtab_off + st_name, start + strtab_off + strtab_size)
+                                  name = bytes(data[start + strtab_off + st_name:end]).decode('latin1')
                                   if name.startswith('_Unwind'):
-                                      m[so + 5] = 0
+                                      data[so + 5] = 0
                                       changed.append(name)
                   pos = start + size + (size % 2)
               open(out, 'wb').write(bytes(data))
