@@ -74,7 +74,13 @@ class ProotRuntime(
     if (!ensureProot()) return false
     val bash = File(usrDir, "bin/bash")
     val termux = File(usrDir, "bin/bash.termux")
-    if (bash.isFile && termux.isFile) return true // already wrapped
+    // Wrapper considered current when it already routes via proot AND carries
+    // the proot-dir LD_LIBRARY_PATH (libtalloc/libandroid-shmem live next to
+    // the binary, outside the snapshot's usr/lib); older installs are
+    // rewritten in place.
+    val wrapperUpToDate = bash.isFile && termux.isFile &&
+      bash.readText(Charsets.US_ASCII).contains("LD_LIBRARY_PATH=")
+    if (wrapperUpToDate) return true
     if (bash.isFile && !bash.readText(Charsets.US_ASCII).contains("#!")) {
       if (!bash.renameTo(termux)) return false
     }
@@ -85,6 +91,8 @@ class ProotRuntime(
         echo "Ubuntu container not installed" >&2
         exit 127
       fi
+      LD_LIBRARY_PATH=${prootDir.absolutePath}:\$LD_LIBRARY_PATH
+      export LD_LIBRARY_PATH
       exec ${prootBin.absolutePath} -0 -r ${rootfsDir.absolutePath} \
         -b /proc -b /dev -b /sys \
         -b ${resolvConf().absolutePath}:/etc/resolv.conf \
