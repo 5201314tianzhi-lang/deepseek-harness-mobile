@@ -84,6 +84,7 @@ class GuideWizard(
 
   /** Cross-fade between the guide surface and the Harness web view. */
   fun showGuide() {
+    cancelScheduledTopBarHide()
     webView.animate().alpha(0f).setDuration(150).start()
     webView.visibility = View.GONE
     stopTopBarPulse()
@@ -102,11 +103,15 @@ class GuideWizard(
     // The WebView may have rendered an error page before the engine was
     // ready (engine boot takes seconds); reload now that it answers.
     webView.reload()
-    if (topStatusBar.visibility == View.VISIBLE) hideTopBar()
+    // Engine is up — keep the breathing dot visible a few seconds longer
+    // (cold-start transition) before fading the bar away, so the pulse
+    // animation is actually seen instead of vanishing immediately.
+    scheduleTopBarHide(6000L)
   }
 
   /** Slide the thin status bar in (cold start over the Harness). */
   fun showTopBar(title: String) {
+    cancelScheduledTopBarHide()
     guideView.visibility = View.GONE
     webView.visibility = View.VISIBLE
     webView.animate().alpha(1f).setDuration(150).start()
@@ -116,12 +121,27 @@ class GuideWizard(
     startTopBarPulse()
   }
 
-  private fun hideTopBar() {
+  /** Public so failure paths can stop the pulse and dismiss the bar. */
+  fun hideTopBar() {
     stopTopBarPulse()
     topStatusBar.animate().alpha(0f).setDuration(250).withEndAction {
       topStatusBar.visibility = View.GONE
       topStatusBar.alpha = 1f
     }.start()
+  }
+
+  private var topBarHidePending: java.lang.Runnable? = null
+
+  private fun scheduleTopBarHide(delayMs: Long) {
+    topBarHidePending?.let { webView.removeCallbacks(it) }
+    val r = java.lang.Runnable { hideTopBar() }
+    topBarHidePending = r
+    webView.postDelayed(r, delayMs)
+  }
+
+  private fun cancelScheduledTopBarHide() {
+    topBarHidePending?.let { webView.removeCallbacks(it) }
+    topBarHidePending = null
   }
 
   /** Guide entry from the cold-start bar: show actions, keep Harness in back. */
@@ -157,6 +177,7 @@ class GuideWizard(
   }
 
   fun onDestroy() {
+    cancelScheduledTopBarHide()
     stopTopBarPulse()
   }
 
@@ -457,6 +478,9 @@ class GuideWizard(
   /** Breathing alpha on the status-bar dot (engine working). */
   private fun startTopBarPulse() {
     val dot = topPulseDot ?: return
+    // Idempotent: any prior animator must be cancelled or repeated starts
+    // would drive the dot with several animators at once (visible jitter).
+    topPulseAnimator?.cancel()
     val animator = android.animation.ValueAnimator.ofFloat(1f, 0.25f)
     animator.duration = 900
     animator.repeatMode = android.animation.ValueAnimator.REVERSE

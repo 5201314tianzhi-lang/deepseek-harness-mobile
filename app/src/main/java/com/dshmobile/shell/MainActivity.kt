@@ -299,6 +299,7 @@ class MainActivity : ComponentActivity() {
       } catch (t: Throwable) {
         AppLog.log("boot", "engine flow exception", t)
         runOnUiThread {
+          wizard.showGuide()
           wizard.showGuideError(getString(R.string.status_engine_start_failed))
         }
       } finally {
@@ -322,6 +323,7 @@ class MainActivity : ComponentActivity() {
     try {
       if (!engineManager.startEngine()) {
         runOnUiThread {
+          wizard.showGuide()
           wizard.showGuideError(getString(R.string.status_engine_start_failed))
         }
         AppLog.log("boot", "startEngine() returned false")
@@ -352,6 +354,7 @@ class MainActivity : ComponentActivity() {
         }
         AppLog.includeFile(java.io.File(filesDir, DshPaths.ENGINE_LOG), DshPaths.ENGINE_LOG)
         runOnUiThread {
+          wizard.showGuide()
           wizard.showGuideError(getString(R.string.status_engine_timeout))
         }
       } else {
@@ -360,6 +363,7 @@ class MainActivity : ComponentActivity() {
     } catch (t: Throwable) {
       AppLog.log("boot", "engine launch exception", t)
       runOnUiThread {
+        wizard.showGuide()
         wizard.showGuideError(getString(R.string.status_engine_start_failed))
       }
     }
