@@ -41,9 +41,10 @@ class UpdateManagerTest {
   fun `concurrent runs are single-flighted`() {
     val ctx = context()
     val statuses = java.util.concurrent.ConcurrentLinkedQueue<String>()
-    // First run: points at an unreachable host so it stays in-flight long
-    // enough for the subsequent calls to hit the single-flight CAS.
-    val first = UpdateManager(ctx).apply { manifestUrl = "https://127.0.0.1:1/manifest.json" }
+    // First run: a fetcher that blocks until the test finishes, keeping the
+    // run in-flight long enough for the subsequent calls to hit the CAS.
+    val first = UpdateManager(ctx)
+    first.fetcher = { Thread.sleep(60_000); "" }
     first.checkAndApply { statuses.add(it) }
     // Give the first run a moment to flip the in-flight flag.
     Thread.sleep(300)
@@ -68,7 +69,10 @@ class UpdateManagerTest {
   @Test
   fun `unreachable manifest surfaces a failed status`() {
     val ctx = context()
-    val manager = UpdateManager(ctx).apply { manifestUrl = "https://127.0.0.1:1/manifest.json" }
+    val manager = UpdateManager(ctx)
+    // Robolectric cannot reach the network deterministically; inject a
+    // fetcher that fails like an unreachable manifest URL would.
+    manager.fetcher = { throw java.io.IOException("Connection refused") }
     val result =
       java.util.concurrent.atomic
         .AtomicReference<String>()

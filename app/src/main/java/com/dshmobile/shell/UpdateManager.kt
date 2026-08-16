@@ -32,6 +32,12 @@ class UpdateManager(
     }
 
   /**
+   * Manifest fetcher, injectable for tests (Robolectric cannot reach the
+   * network deterministically). Production uses the real HTTP client.
+   */
+  internal var fetcher: (String) -> String = { url -> fetch(url) }
+
+  /**
    * Run the update flow on a background thread.
    * @param onStatus progress text callback (any thread).
    */
@@ -54,7 +60,7 @@ class UpdateManager(
         onStatus(context.getString(R.string.update_checking))
         val manifestUrl = this.manifestUrl
         if (!manifestUrl.startsWith("https://")) throw IllegalStateException(context.getString(R.string.err_manifest_https))
-        val manifest = JSONObject(fetch(manifestUrl))
+        val manifest = JSONObject(fetcher(manifestUrl))
         val url = manifest.getString("url")
         if (!url.startsWith("https://")) throw IllegalStateException(context.getString(R.string.err_snapshot_url_https))
         // sha256 is mandatory: refuse the update when missing, otherwise the

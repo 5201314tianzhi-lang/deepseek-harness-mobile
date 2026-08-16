@@ -11,6 +11,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -20,6 +23,8 @@ import java.io.File
  * W^X write-bit stripping, exec-bit enforcement and idempotent overwrite of
  * previously stripped files (interrupted-extraction recovery).
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class SnapshotExtractorTest {
   @get:Rule
   val tmp = TemporaryFolder()
