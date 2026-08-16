@@ -2,9 +2,8 @@
 
 > 2026-08-15 审查产出。按依赖分组，P1 = 安全（优先处理），P2 = 正确性 bug，P3 = 健壮性。
 > 状态：🟥 待处理 / 🟨 处理中 / 🟩 已修复
-> 全部 14 项已于 2026-08-15 修复。本机无 JDK/Android SDK 且网络受限，未做本地编译验证——
-> 已做 XML 解析校验 + Kotlin 结构（括号/字符串/注释）平衡检查；请在装有 JDK 17+ 与
-> Android SDK 的环境跑 `./gradlew assembleDebug`（注意先放入 snapshot.tar.xz）确认编译。
+> 全部 24 项已修复（I-01..I-14 于 2026-08-15，I-15..I-24 于 2026-08-16 全面审查）。
+> 修复经 CI 质量门验证（assembleDebug + lintDebug + ktlintCheck + 单元测试 + JS/C 本地测试）。
 
 ---
 

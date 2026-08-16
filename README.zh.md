@@ -43,6 +43,7 @@
 | `PickerBridge` | `.../PickerBridge.kt` | SAF 目录/文件选择；待决回调跨 Activity 重建保留 |
 | `ExportFlow` | `.../ExportFlow.kt` | 应用内下载到 MediaStore Downloads（不跟随重定向） |
 | `NotificationHelper` | `.../NotificationHelper.kt` | 通知通道 + 测试通知 |
+| `AppLog` | `.../AppLog.kt` | 面向用户的诊断日志（有界环形缓冲 + 日志文件，剪贴板复制） |
 | `EngineManager` | `.../EngineManager.kt` | 快照解压、dshdata 迁移/重连、引擎进程环境与生命周期 |
 | `EngineService` | `.../EngineService.kt` | 前台服务：拥有引擎生命周期 + 5s 看门狗 |
 | `EngineProbe` | `.../EngineProbe.kt` | 对 `127.0.0.1:3080` 的 HTTP 可达性探测 |
@@ -55,7 +56,10 @@
 | `UpdateManager` | `.../UpdateManager.kt` | 运行时快照下载/校验/切换（单飞、唯一暂存名） |
 | `Downloader` | `.../Downloader.kt` | 公共 HTTP 下载 + SHA-256 |
 | `DshPaths` | `.../DshPaths.kt` | 应用相对路径集中注册表（无硬编码包路径） |
-| `ShizukuSupport` | `.../ShizukuSupport.kt` | 可选 Shizuku 存在性/状态检测（保活增强） |
+| `ShizukuSupport` | `.../ShizukuSupport.kt` | Shizuku 服务/权限检测 + appops 后台豁免增强流程 |
+| `KeepAliveUserService` | `.../KeepAliveUserService.kt` | Shizuku 用户服务（shell 身份）执行 appops 保活豁免 |
+| `KeepAliveAlarm` | `.../KeepAliveAlarm.kt` | 30 分钟自续心跳闹钟（+ `KeepAliveAlarmReceiver`） |
+| `BootReceiver` | `.../BootReceiver.kt` | 开机 / 升级 / 电源 / 解锁重拉起前台服务 |
 
 ### 首次启动流程（`MainActivity.onCreate`）
 
@@ -220,12 +224,30 @@ Release 构建（CI）额外传入：
   -PabiFilter=arm64-v8a                      # 每个矩阵腿只编一个 ABI
 ```
 
+### 质量门（CI）
+
+每次 push 到 `main` 及每个 PR 都会跑 `.github/workflows/ci.yml`：
+`./gradlew assembleDebug lintDebug ktlintCheck testDebugUnitTest` 外加
+`./tests/run-local.sh`——编译、Android lint（`abortOnError`，debug 变体）、
+ktlint（`.editorconfig` 的 android 规则集）、JVM 单元测试（JUnit4 +
+Robolectric + mockk）与 JS/C 本地测试全部通过才算通过。ktlint 从 Maven
+Central（`com.pinterest.ktlint:ktlint-cli`）拉取（非插件门户，国内网络可用）；
+提交前用 `./gradlew ktlintFormat` 自动格式化。release workflow 额外产出
+jacoco 覆盖率报告（尽力而为，非门禁）。
+
+本地跑测试：
+
+```sh
+./gradlew testDebugUnitTest   # JVM 单元测试（JUnit4 + Robolectric + mockk）
+./tests/run-local.sh          # JS polyfill 测试 + exec-hook C 测试（node + gcc）
+```
+
 构建配置：AGP 9.3.1、Kotlin 2.4.10、minSdk 26、targetSdk 34（Android 15+
 的 app-data ELF exec 限制由 linker64 回退兜底）。解压器会去除可执行文件的
 写权限（W^X：华为/EMUI 拒绝执行可写文件）。`snapshot.tar.xz` 排除资源压缩
-（`noCompress += "xz"`）；lint 对离线环境不阻断。**签名 keystore 只存在于
-仓库 secret `RELEASE_KEYSTORE_B64`**——workflow 缺失即拒绝构建（绝不发布或
-现生成密钥）。
+（`noCompress += "xz"`）；Android lint 错误阻断构建（`abortOnError`）。
+**签名 keystore 只存在于仓库 secret `RELEASE_KEYSTORE_B64`**——workflow
+缺失即拒绝构建（绝不发布或现生成密钥）。
 
 ## 权限
 
@@ -251,8 +273,9 @@ ABI 匹配的 APK——装错架构的包解压正常，但引擎无法执行。
 
 ## 已知限制
 
-- 保活为尽力而为：激进省电的厂商电池管理仍可能杀掉服务；Shizuku 增强目前
-  仅报告状态（appops-application 步骤需要 shell-exec API，已推迟）。
+- 保活为尽力而为：激进省电的厂商电池管理仍可能杀掉服务；Shizuku 增强
+  （appops `RUN_IN_BACKGROUND` / `RUN_ANY_IN_BACKGROUND`）需要安装并授权
+  Shizuku，且电池优化豁免最终仍取决于厂商是否遵守。
 - 目录选择仅把 `primary` 卷映射为真实路径；其他卷回退为不透明的
   `content://` tree URI。
 - 引擎切换后由看门狗下轮探测重启（切换后最多 ~5s），且仅当旧进程被杀成功；

@@ -125,10 +125,10 @@ tasks.whenTaskAdded {
       if (!snap.exists()) {
         throw GradleException(
           "缺少运行时快照 assets/snapshot.tar.xz / Missing runtime snapshot assets/snapshot.tar.xz — " +
-            "从 GitHub Releases 下载 snapshot-x86_64.tar.xz 后放到 app/src/main/assets/snapshot.tar.xz，或按 " +
-            "scripts/make-snapshot.sh 在 Termux 设备自打后拉取（见 README.md）。/ " +
-            "Download snapshot-x86_64.tar.xz from GitHub Releases into app/src/main/assets/snapshot.tar.xz, or " +
-            "build it on a Termux device with scripts/make-snapshot.sh (see README.md).",
+            "从上游 Releases（kelai141/dsh-mobile-apk）下载 snapshot-<abi>.tar.xz 后放到 " +
+            "app/src/main/assets/snapshot.tar.xz（见 README.md）。/ " +
+            "Download snapshot-<abi>.tar.xz from the upstream release " +
+            "(kelai141/dsh-mobile-apk) into app/src/main/assets/snapshot.tar.xz (see README.md).",
         )
       }
     }

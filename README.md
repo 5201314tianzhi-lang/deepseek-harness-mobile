@@ -53,6 +53,7 @@ web agent that can actually execute bash.
 | `PickerBridge` | `.../PickerBridge.kt` | SAF directory/file picking; pending callback survives activity recreation |
 | `ExportFlow` | `.../ExportFlow.kt` | In-app downloads to MediaStore Downloads (no redirect following) |
 | `NotificationHelper` | `.../NotificationHelper.kt` | Notification channel + test notifications |
+| `AppLog` | `.../AppLog.kt` | Client-visible diagnostic log (bounded ring buffer + log file, clipboard copy) |
 | `EngineManager` | `.../EngineManager.kt` | Snapshot extraction, dshdata migration/relinking, engine process env and lifecycle |
 | `EngineService` | `.../EngineService.kt` | Foreground service: owns the engine lifecycle + 5s watchdog |
 | `EngineProbe` | `.../EngineProbe.kt` | HTTP reachability probe of `127.0.0.1:3080` |
@@ -65,7 +66,10 @@ web agent that can actually execute bash.
 | `UpdateManager` | `.../UpdateManager.kt` | Runtime snapshot download/verify/swap (single-flight, unique staging) |
 | `Downloader` | `.../Downloader.kt` | Shared HTTP download + SHA-256 |
 | `DshPaths` | `.../DshPaths.kt` | Central registry of app-relative paths (no hardcoded package paths) |
-| `ShizukuSupport` | `.../ShizukuSupport.kt` | Optional Shizuku presence/status detection (keep-alive boost) |
+| `ShizukuSupport` | `.../ShizukuSupport.kt` | Shizuku server/permission detection + appops background-exemption boost flow |
+| `KeepAliveUserService` | `.../KeepAliveUserService.kt` | Shizuku user service (shell identity) that applies the appops keep-alive exemptions |
+| `KeepAliveAlarm` | `.../KeepAliveAlarm.kt` | 30-min self-re-arming heartbeat alarm (+ `KeepAliveAlarmReceiver`) |
+| `BootReceiver` | `.../BootReceiver.kt` | Boot / upgrade / power / unlock re-raise the foreground service |
 
 ### First-run flow (`MainActivity.onCreate`)
 
@@ -269,19 +273,28 @@ Release builds (CI) additionally pass:
 ### Quality gate (CI)
 
 Every push to `main` and every PR runs `.github/workflows/ci.yml`:
-`./gradlew assembleDebug lintDebug ktlintCheck` — compile, Android lint
-(`abortOnError`, debug variant) and ktlint (android ruleset via
-`.editorconfig`) must all pass or the change is blocked. ktlint runs from
-Maven Central (`com.pinterest.ktlint:ktlint-cli`), not the plugin portal, so
-it works in CN networks too; auto-format with `./gradlew ktlintFormat`
-before committing.
+`./gradlew assembleDebug lintDebug ktlintCheck testDebugUnitTest` plus
+`./tests/run-local.sh` — compile, Android lint (`abortOnError`, debug variant),
+ktlint (android ruleset via `.editorconfig`), the JVM unit tests (JUnit4 +
+Robolectric + mockk) and the JS/C local tests must all pass or the change is
+blocked. ktlint runs from Maven Central (`com.pinterest.ktlint:ktlint-cli`),
+not the plugin portal, so it works in CN networks too; auto-format with
+`./gradlew ktlintFormat` before committing. The release workflow additionally
+produces a jacoco coverage report (best-effort, not a gate).
+
+Run the tests locally:
+
+```sh
+./gradlew testDebugUnitTest   # JVM unit tests (JUnit4 + Robolectric + mockk)
+./tests/run-local.sh          # JS polyfill tests + exec-hook C tests (node + gcc)
+```
 
 Build config: AGP 9.3.1, Kotlin 2.4.10, minSdk 26, targetSdk 34 (Android 15+
 app-data ELF exec restrictions are covered by the linker64 fallback). The
 extractor strips the write bit from executables (W^X: Huawei/EMUI refuse to
 execute writable files). `snapshot.tar.xz` is excluded from resource
-compression (`noCompress += "xz"`); lint is non-blocking for offline
-environments. **The signing keystore lives only in the repo secret
+compression (`noCompress += "xz"`); Android lint errors block the build
+(`abortOnError`). **The signing keystore lives only in the repo secret
 `RELEASE_KEYSTORE_B64`** — the workflow refuses to build without it (never
 publishes or generates keys).
 
@@ -313,8 +326,9 @@ installing the wrong one extracts fine but the engine cannot execute.
 ## Known limitations
 
 - Keep-alive is best-effort: aggressive OEM battery managers may still kill
-  the service; the Shizuku boost currently only reports status (the
-  appops-application step needs the shell-exec API, deferred).
+  the service; the Shizuku boost (appops `RUN_IN_BACKGROUND` /
+  `RUN_ANY_IN_BACKGROUND`) needs Shizuku installed and authorized, and the
+  battery-optimization exemption still depends on the vendor honoring it.
 - Directory picking maps only the `primary` volume to a real path; other
   volumes fall back to the opaque `content://` tree URI.
 - The engine restarts from the new runtime only after the watchdog's next poll

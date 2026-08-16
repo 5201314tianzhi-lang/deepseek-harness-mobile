@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   quality-gate:
-    name: Quality gate (compile + lint + ktlint)
+    name: Quality gate (compile + lint + ktlint + tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -45,4 +45,7 @@ jobs:
       - name: Quality gate
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug lintDebug ktlintCheck
+          ./gradlew assembleDebug lintDebug ktlintCheck testDebugUnitTest
+
+      - name: Run local JS/C tests
+        run: ./tests/run-local.sh

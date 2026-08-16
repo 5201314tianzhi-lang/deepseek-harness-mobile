@@ -1,4 +1,4 @@
-# 壳 APK 设计（dsh-mobile-apk）
+# 壳 APK 设计（deepseek-harness-mobile）
 
 > v3.0 ｜ 2026-08-16 更新：与当前代码逐项对应（首次同意门、proot Ubuntu 容器、
 > 引擎生命周期归服务、进程级 token、解压/更新幂等）。审查/修复记录见 `docs/issues.md`。
@@ -296,9 +296,9 @@ SAF 目录选择本身无需权限（用户经系统选择器授权 tree URI）�
   解压器对可执行文件去除写位（rwx→r-x），引擎二进制运行时不写自身。
 - AGP 9.3.1、Kotlin 2.4.10、Gradle 9.7.0（wrapper）。
 - `snapshot.tar.xz` 不入库（CI 从上游 Releases 下载进 assets/）；缺失时构建
-  loud fail 并给出获取指引（scripts/make-snapshot.sh 为 Termux 端打包脚本）。
+  loud fail 并给出获取指引（从上游 kelai141/dsh-mobile-apk 的 Releases 下载）。
 - `noCompress += "xz"`：防二次压缩破坏 `openFd`。
-- lint 不阻断（离线环境无 lint-gradle 缓存）。
+- lint 错误阻断（`abortOnError`，CI 质量门跑 `lintDebug`）。
 - **发布矩阵**：每腿 `-PabiFilter=<abi>` 只编一个 ABI（否则两腿产出同一通用
   APK 仅后缀不同，且 32 位 ABI 会混入硬编码 linker64 的 hook）；
   `-PversionName/-PversionCode` 由发布 tag 推导（v0.1.0 → 100）；
@@ -319,9 +319,10 @@ SAF 目录选择本身无需权限（用户经系统选择器授权 tree URI）�
 
 ## 11. 已知限制
 
-- 保活尽力而为：激进省电的厂商策略可能杀服务；Shizuku 增强停留在状态检测
-  （appops-application 需 shell-exec API，Shizuku.newProcess 在 api 13.1.5
-  非公开，已推迟）。
+- 保活尽力而为：激进省电的厂商策略可能杀服务；Shizuku 增强（appops
+  `RUN_IN_BACKGROUND` / `RUN_ANY_IN_BACKGROUND`，经 `KeepAliveUserService`
+  以 shell 身份执行）需要安装并授权 Shizuku，且电池优化豁免最终仍取决于
+  厂商是否遵守。
 - 目录映射仅 `primary` 卷；其他卷回退 `content://` 不透明句柄（bash 不可直读）。
 - 更新后引擎重启由看门狗轮询驱动（≤5s 延迟），且仅当旧进程被杀成功；杀失败
   时提示用户重启应用。
