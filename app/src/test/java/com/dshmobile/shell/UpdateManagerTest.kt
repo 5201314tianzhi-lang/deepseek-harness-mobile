@@ -41,11 +41,15 @@ class UpdateManagerTest {
   fun `concurrent runs are single-flighted`() {
     val ctx = context()
     val statuses = java.util.concurrent.ConcurrentLinkedQueue<String>()
-    // First run: a fetcher that blocks until the test finishes, keeping the
-    // run in-flight long enough for the subsequent calls to hit the CAS.
+    // First run: a fetcher that blocks until released, keeping the run
+    // in-flight long enough for the subsequent calls to hit the CAS.
+    val releaseFirst = CountDownLatch(1)
     val first = UpdateManager(ctx)
     first.fetcher = {
-      Thread.sleep(60_000)
+      try {
+        releaseFirst.await(60, TimeUnit.SECONDS)
+      } catch (_: InterruptedException) {
+      }
       ""
     }
     first.checkAndApply { statuses.add(it) }
@@ -67,6 +71,10 @@ class UpdateManagerTest {
     }
     assertTrue("third concurrent run must report in-progress", latch.await(5, TimeUnit.SECONDS))
     assertTrue(inProgress.get())
+    // Release the blocking first run so its in-flight flag resets before the
+    // next test in this class.
+    releaseFirst.countDown()
+    Thread.sleep(1000)
   }
 
   @Test
