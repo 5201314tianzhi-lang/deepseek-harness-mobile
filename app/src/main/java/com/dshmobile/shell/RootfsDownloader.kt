@@ -45,10 +45,10 @@ object RootfsDownloader {
 
   fun install(context: Context): Boolean {
     if (!RUNNING.compareAndSet(false, true)) return false
+    val tmp = File(context.filesDir, "ubuntu-base.download")
     return try {
       val arch = abi(context) ?: return false
       val tarballName = TARBALL_PREFIX + arch + ".tar.gz"
-      val tmp = File(context.filesDir, "ubuntu-base.download")
       val rootfs = File(context.filesDir, DshPaths.ROOTFS_DIR)
 
       AppLog.log("rootfs", "downloading " + BASE_URL + tarballName)
