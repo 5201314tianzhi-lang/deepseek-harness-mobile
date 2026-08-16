@@ -116,6 +116,30 @@ jobs:
           fi
           ls -la release.keystore
 
+      - name: Package unwind patch lib (${{ matrix.abi }})
+        run: |
+          # The snapshot's C++ runtime (libc++_shared.so) does not export
+          # _Unwind_Resume (Termux links libunwind statically into each
+          # binary), so dlopen of native modules like node-pty fails. Bundle
+          # the snapshot's own libunwind.a into a shared lib (archive link,
+          # no source) and LD_PRELOAD it to supply the missing symbol.
+          mkdir -p /tmp/unwind && cd /tmp/unwind
+          tar -xJf "$GITHUB_WORKSPACE/app/src/main/assets/snapshot.tar.xz" usr/lib/libunwind.a 2>/dev/null || { echo "libunwind.a not in snapshot"; exit 1; }
+          export NDK_TOOLCHAIN="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64"
+          if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
+            TRIPLE=aarch64-linux-android26
+          else
+            TRIPLE=x86_64-linux-android26
+          fi
+          "$NDK_TOOLCHAIN/bin/$TRIPLE-clang" -shared -fPIC \
+            -Wl,--whole-archive usr/lib/libunwind.a -Wl,--no-whole-archive \
+            -o libunwind-patch.so
+          readelf -d libunwind-patch.so | grep NEEDED || true
+          readelf --dyn-syms libunwind-patch.so | grep -c "_Unwind_Resume"
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/unwind"
+          cp libunwind-patch.so "$GITHUB_WORKSPACE/app/src/main/assets/unwind/libunwind-patch-${{ matrix.abi }}.so"
+          ls -la "$GITHUB_WORKSPACE/app/src/main/assets/unwind/"
+
       - name: Build release APK
         run: |
           chmod +x gradlew

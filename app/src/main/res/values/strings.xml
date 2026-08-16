@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="app_name">DeepSeek Harness</string>
+  <string name="app_name">深度编码</string>
 
   <!-- Guide view -->
   <string name="button_open_termux">Open Termux</string>

@@ -117,17 +117,42 @@ class EngineManager(private val context: Context, private val pickToken: String?
    * Candidates that may provide the missing C++ unwind symbol
    * (_Unwind_Resume): the snapshot's libc++_shared.so exports __cxa_* but not
    * the unwind runtime (Termux links it statically), so dlopen of pty.node
-   * fails on every device. System libraries differ per Android version/vendor,
-   * so probe them at runtime and LD_PRELOAD whichever makes the module load.
+   * fails on every device. The first candidate is the bundled archive-linked
+   * libunwind-patch.so (built from the snapshot's own libunwind.a in CI);
+   * system libraries are probed as fallbacks for ROMs that ship one.
    */
   private fun unwindCandidates(): List<String?> {
-    return listOf(
+    return listOfNotNull(
+      bundledUnwindPatch()?.absolutePath,
       null,
       "/system/lib64/libgcc.so",
       "/system/lib64/libc++.so",
       "/system/lib64/libc++_shared.so",
       "/system/lib64/libunwind.so",
     )
+  }
+
+  /** Extract the bundled libunwind-patch.so (per-ABI) from APK assets. */
+  private fun bundledUnwindPatch(): File? {
+    return try {
+      val target = File(context.filesDir, "libunwind-patch.so")
+      if (target.isFile && target.length() > 0L) return target
+      val abi = when {
+        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("arm64") } -> "arm64-v8a"
+        android.os.Build.SUPPORTED_ABIS.any { it.startsWith("x86_64") } -> "x86_64"
+        else -> null
+      } ?: return null
+      context.assets.open("unwind/libunwind-patch-$abi.so").use { input ->
+        target.outputStream().use { out -> input.copyTo(out) }
+      }
+      target.setExecutable(true, true)
+      target.setWritable(false, false) // W^X: preload libs must not be writable
+      AppLog.log("diag", "extracted bundled unwind patch -> " + target.absolutePath)
+      target
+    } catch (t: Throwable) {
+      AppLog.log("diag", "bundled unwind patch unavailable", t)
+      null
+    }
   }
 
   private fun probePtyNode(pty: File, preload: String?): Pair<Int, String> {
