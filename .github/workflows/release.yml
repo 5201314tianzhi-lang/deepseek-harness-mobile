@@ -218,6 +218,18 @@ jobs:
           cp libunwind-patch.so "$GITHUB_WORKSPACE/app/src/main/assets/unwind/libunwind-patch-${{ matrix.abi }}.so"
           ls -la "$GITHUB_WORKSPACE/app/src/main/assets/unwind/"
 
+      - name: Run JVM unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest
+
+      - name: Run local JS/C tests
+        run: ./tests/run-local.sh
+
+      - name: Test coverage report (best effort)
+        run: |
+          ./gradlew jacocoTestReport || true
+
       - name: Build release APK
         run: |
           chmod +x gradlew

@@ -27,7 +27,14 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+/* Overridable at compile time (-DLINKER=...) so tests can point the reroute
+ * at a fake linker without touching the production default. */
+#ifndef LINKER
 #define LINKER "/system/bin/linker64"
+#endif
+
+/* Empty argv fallback for POSIX-legal execv(path, NULL) callers. */
+static char *const EMPTY_ARGV[] = { NULL };
 
 /* Expected ELF machine for this build's ABI: a cross-arch ELF (e.g. an
  * arm64 binary on an x86_64 device) must NOT be rerouted through linker64 —
@@ -62,9 +69,9 @@ static int is_elf(const char *path) {
 static int exec_via_linker(const char *path, char *const argv[],
                            char *const envp[]) {
   /* POSIX allows execv(path, NULL) (the kernel treats it as an empty argv);
-   * the rerouted argv must be well-formed too. */
-  char *const empty_argv[] = { NULL };
-  if (!argv) argv = empty_argv;
+   * the rerouted argv must be well-formed too. The fallback is a global so
+   * compiler null-check elimination cannot break it. */
+  if (!argv) argv = EMPTY_ARGV;
   size_t argc = 0;
   while (argv[argc]) argc++;
   char **new_argv = (char **)malloc((argc + 3) * sizeof(char *));
@@ -89,13 +96,20 @@ static int maybe_reroute(const char *path, char *const argv[],
                          char *const envp[]) {
   if (!path || strcmp(path, LINKER) == 0) return 1;
   if (!is_elf(path)) return 1;
-  exec_via_linker(path, argv, envp);
+  exec_via_linker(path, argv ? argv : EMPTY_ARGV, envp);
   return 1;
 }
 
 int execve(const char *path, char *const argv[], char *const envp[]) {
-  if (maybe_reroute(path, argv, envp)) {
-    return (int)syscall(SYS_execve, path, argv, envp);
+  /* glibc's prototype marks path/argv as __nonnull((1,2)); under -O2 GCC
+   * would then delete every null check below, so a POSIX-legal
+   * execv(path, NULL) call crashed inside the hook (observed: SIGSEGV in
+   * the argv walk at -O2, fine at -O0). Reading the parameters through
+   * volatile keeps the null checks real. */
+  char *const *volatile argv_v = argv;
+  const char *volatile path_v = path;
+  if (maybe_reroute(path_v ? path_v : "", argv_v ? argv_v : EMPTY_ARGV, envp)) {
+    return (int)syscall(SYS_execve, path_v ? path_v : "", argv_v, envp);
   }
   return -1;
 }

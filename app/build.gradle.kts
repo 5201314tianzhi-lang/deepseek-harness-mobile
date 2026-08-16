@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
   id("com.android.application")
   id("org.jetbrains.kotlin.android")
+  id("jacoco")
 }
 
 android {
@@ -80,6 +81,13 @@ android {
     abortOnError = false
   }
 
+  testOptions {
+    unitTests {
+      // Robolectric needs real Android resources/asset access.
+      isIncludeAndroidResources = true
+    }
+  }
+
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
@@ -91,6 +99,20 @@ kotlin {
   compilerOptions {
     jvmTarget.set(JvmTarget.JVM_17)
   }
+}
+
+// Unit-test coverage report (CI uploads it; not a hard gate).
+tasks.register<JacocoReport>("jacocoTestReport") {
+  dependsOn("testDebugUnitTest")
+  reports {
+    xml.required.set(true)
+    html.required.set(true)
+  }
+  sourceDirectories.setFrom(files("src/main/java"))
+  classDirectories.setFrom(fileTree(layout.buildDirectory.dir("tmp/kotlin-classes/debug")))
+  executionData.setFrom(
+    fileTree(layout.buildDirectory.dir("outputs/unit_test_code_coverage")) { include("**/*.exec") },
+  )
 }
 
 // The runtime snapshot ships from GitHub Releases (the large file is not in
@@ -118,4 +140,8 @@ dependencies {
   implementation("org.tukaani:xz:1.12")
   implementation("dev.rikka.shizuku:api:13.1.5")
   implementation("dev.rikka.shizuku:provider:13.1.5")
+
+  testImplementation("junit:junit:4.13.2")
+  testImplementation("org.robolectric:robolectric:4.14.1")
+  testImplementation("io.mockk:mockk:1.13.13")
 }

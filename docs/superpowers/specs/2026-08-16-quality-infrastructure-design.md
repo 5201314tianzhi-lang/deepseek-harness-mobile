@@ -19,11 +19,12 @@
 
 ### 1. Gradle 侧
 
-**ktlint 插件接入**(`app/build.gradle.kts` 或根构建):
+**ktlint 接入(Maven Central CLI 任务)**:
 
-- 使用 `org.jlleitschuh.gradle.ktlint` 插件,与构建集成,本地有 JDK 时也可 `./gradlew ktlintCheck`
-- 实施时验证与 Gradle 9.7 / AGP 9.3.1 / Kotlin 2.4.10 的兼容性;不兼容则回退 ktlint 官方 `com.pinterest.ktlint` 插件,再不行回退 CI 独立 CLI
-- 版本选型时优先取与 Kotlin 2.4 兼容的最新稳定版
+- 不在 gradle 插件门户接插件:`plugins.gradle.org` 在 CN 网络(本项目的目标环境)实测被拦截,`org.jlleitschuh.gradle.ktlint` / `dev.ktlint` 均无法解析
+- 使用 Maven Central 上的 `com.pinterest.ktlint:ktlint-cli:1.8.0`(实测可达),在根构建里定义一个 `configuration` + `JavaExec` 自定义任务
+- 任务名 `ktlintCheck` / `ktlintFormat`(kscript 式调用 CLI,`--android` 标志),CI 与本地同一入口
+- 实施时若任务包装遇到问题,回退:CI 里直接 `java -jar ktlint-cli.jar` 独立执行(逻辑等价,只是失去 gradle 入口)
 
 **lint 提升为阻塞**:
 
@@ -61,10 +62,10 @@
 
 ## 验证策略
 
-本机无 JDK,无法本地跑 gradle:
+本机网络实测:JDK 21 存在但不在 PATH;`maven.google.com`(AGP 仓库)与 GitHub 超时,`plugins.gradle.org` 被拦截,Maven Central 与 `dl.google.com` 可用 → **本地无法运行任何 gradle 任务**(AGP 无法解析):
 
-1. 优先检查本机是否有 docker;有则用 gradle 官方镜像在容器里验证 `ktlintCheck`(不含 Android 部分)
-2. 完整验证(含 assembleDebug)依赖 CI 首次运行 — 需用户确认后 push 到 GitHub 触发
+1. 本地用 JDK 21 + Maven Central 下载的 `ktlint-cli` 独立跑一遍,验证:版本可用性、.editorconfig 效果、`ktlintFormat` 全库格式化结果、`ktlintCheck` 零违规 —— 即 gradle 任务内部的真实逻辑
+2. gradle 任务包装本身 + `assembleDebug lintDebug ktlintCheck` 的完整门禁依赖 CI 首次运行 — 需用户确认后 push 到 GitHub 触发
 
 ## 范围外(明确不做)
 
