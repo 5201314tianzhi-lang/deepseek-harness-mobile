@@ -10,7 +10,7 @@ import java.io.File
  * filesDir/usr and the dsh engine process lifecycle (PATH/LD_LIBRARY_PATH/HOME
  * injected explicitly — the snapshot is self-sufficient, no Termux app needed).
  */
-class EngineManager(private val context: Context, private val pickToken: String? = null) {
+class EngineManager(private val context: Context) {
 
   val usrDir = File(context.filesDir, DshPaths.USR_DIR)
   val homeDir = File(context.filesDir, "home")
@@ -38,14 +38,6 @@ class EngineManager(private val context: Context, private val pickToken: String?
   val engineReady: Boolean get() = nodeBin.exists()
 
   /**
-   * Process-wide start guard. MainActivity and EngineService each construct
-   * their own EngineManager instance, so instance fields are not shared —
-   * double-start protection must live on the companion object (CAS).
-   */
-  private val starting: Boolean
-    get() = STARTING.get()
-
-  /**
    * Extract the bundled snapshot archive into filesDir. Runs on any thread;
    * callers own the progress UI.
    * @param onProgress bytesDone, bytesTotal.
@@ -53,9 +45,10 @@ class EngineManager(private val context: Context, private val pickToken: String?
    */
   fun extractSnapshot(onProgress: (Long, Long) -> Unit): Boolean {
     return try {
-      val fd = context.assets.openFd("snapshot.tar.xz")
-      AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + usrDir.parentFile)
-      SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
+      context.assets.openFd("snapshot.tar.xz").use { fd ->
+        AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + usrDir.parentFile)
+        SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
+      }
       homeDir.mkdirs()
       unwindResolver.diagnosePtyNode()
       unwindResolver.probeInNodeIfPresent()
@@ -313,6 +306,21 @@ class EngineManager(private val context: Context, private val pickToken: String?
       STARTING.set(false)
       return true
     }
+    // Cooldown expired but the process is still alive: it is hung (a healthy
+    // boot always answers within the 90s window) and holds the port — kill it
+    // or every subsequent start dies with EADDRINUSE and the watchdog loops
+    // forever restarting a corpse.
+    EngineManager.engineProcess?.let { p ->
+      if (p.isAlive) {
+        AppLog.log("engine", "previous engine process alive past cooldown, killing hung process")
+        p.destroyForcibly()
+        try {
+          p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+        }
+      }
+    }
+    EngineManager.engineProcess = null
     return try {
       val args = arrayOf(
         nodeBin.absolutePath, "--expose-internals", dshBin.absolutePath, "web", "--port", port.toString(),
@@ -360,8 +368,10 @@ class EngineManager(private val context: Context, private val pickToken: String?
         "TERMUX_APP__LEGACY_DATA_DIR" to context.filesDir.parentFile.absolutePath,
         "TERMUX_VERSION" to "0.118.3",
         // Auth token for the directory-pick bridge endpoint (validated by the
-        // web-compat plugin as x-dsh-pick-token).
-        "DSH_PICK_TOKEN" to (pickToken ?: ""),
+        // web-compat plugin as x-dsh-pick-token). Process-level singleton so a
+        // watchdog-restarted engine (separate EngineManager instance) keeps the
+        // same token the WebView bridge holds — otherwise picks break silently.
+        "DSH_PICK_TOKEN" to pickToken,
       ) + unwindResolver.opensslConfEnv() + termuxExecEnv
       engineProcess = startWithArgs(args, env)
       // The cooldown is only set after a real start; a failed path does not
@@ -449,16 +459,41 @@ class EngineManager(private val context: Context, private val pickToken: String?
    *  the candidates below are relative to usrDir and must NOT repeat "usr".
    */
 
-  /** Stop the engine process (best-effort). */
-  fun stopEngine() {    EngineManager.engineProcess?.destroy()
-    EngineManager.engineProcess = null
-    // Reset the cooldown after a manual stop: the user returning to the
-    // foreground should be allowed to restart immediately.
-    EngineManager.lastStartAttemptAt = 0
+  /** Stop the engine process (best-effort). Guarded by the start CAS so a
+   *  concurrent start cannot race a destroy-then-null. */
+  fun stopEngine() {
+    if (!STARTING.compareAndSet(false, true)) {
+      AppLog.log("engine", "stop skipped: engine start in progress")
+      return
+    }
+    try {
+      EngineManager.engineProcess?.let { p ->
+        p.destroy()
+        try {
+          p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+        }
+      }
+      EngineManager.engineProcess = null
+      // Reset the cooldown after a manual stop: the user returning to the
+      // foreground should be allowed to restart immediately.
+      EngineManager.lastStartAttemptAt = 0
+    } finally {
+      STARTING.set(false)
+    }
   }
 
   companion object {
     private const val TAG = "dsh-engine"
+
+    /**
+     * Process-wide auth token for the directory-pick bridge. Single source of
+     * truth: MainActivity's WebView bridge and every EngineManager instance
+     * (including the EngineService watchdog's) read the same value, so an
+     * engine restart never leaves the bridge token mismatched. Random per
+     * process start, exactly as before — just shared.
+     */
+    val pickToken: String = java.util.UUID.randomUUID().toString()
 
     /** Watchdog/retry backoff: no new start within this window of the last
      *  attempt. Cold node boot on the phone takes 20-45s (plugin tree + first

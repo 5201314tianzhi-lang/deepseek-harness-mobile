@@ -65,6 +65,10 @@ class UnwindResolver(
   }
 
   /** Find (and cache) a library that makes pty.node loadable. */
+  /** Resolve lazily but guard against concurrent probe rounds: extraction and
+   *  engine-start threads can both reach here — without a lock each spawns
+   *  duplicate node probe processes (wasted, same result). */
+  @Synchronized
   fun resolveIfNeeded(pty: File): String? {
     if (unwindLib != null) return unwindLib
     for (candidate in unwindCandidates()) {
@@ -181,8 +185,15 @@ class UnwindResolver(
       b.redirectErrorStream(true)
     }
     val proc = pb.start()
+    // Bounded wait: a hung node probe must not block its caller forever (the
+    // watchdog thread would be permanently stuck and the engine never
+    // restarted). Kill after 30s, then drain whatever was written.
+    if (!proc.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+      AppLog.log("diag", "pty probe hung, killing")
+      proc.destroyForcibly()
+    }
     val out = proc.inputStream.bufferedReader().readText()
-    val code = try { proc.waitFor() } catch (_: Exception) { -1 }
+    val code = try { proc.exitValue() } catch (_: Exception) { -1 }
     return code to out
   }
 }

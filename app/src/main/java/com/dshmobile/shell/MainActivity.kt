@@ -25,11 +25,11 @@ class MainActivity : ComponentActivity() {
   private lateinit var export: ExportFlow
   private lateinit var notifyHelper: NotificationHelper
 
-  /** One-time auth token for the directory-pick bridge (random per process
-   *  start; held in the engine env and the JS bridge). */
-  private val pickToken: String = java.util.UUID.randomUUID().toString()
-
-  private val engineManager by lazy { EngineManager(this, pickToken) }
+  /** Engine lifecycle is owned by EngineService (keep-alive + watchdog); the
+   *  Activity starts it but never kills it — onDestroy must not stop the
+   *  engine or backgrounding would kill a healthy process that the watchdog
+   *  then cold-boots again. */
+  private val engineManager by lazy { EngineManager(this) }
   private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
   /** Engine launch in flight (guards the Launch button against double taps). */
   private val launchInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -103,16 +103,21 @@ class MainActivity : ComponentActivity() {
       onPermissionRequired = { harness.postScript("window.__dshBridge?.onPermissionRequired?.()") },
       notify = onNotify,
     )
+    picker.restoreState(savedInstanceState)
     harness = HarnessWebView(
       this, picker, export, onNotify,
       onEngineError = { showGuide() },
       onKeepScreen = { keepScreenOn(it) },
-      pickToken = pickToken,
+      pickToken = EngineManager.pickToken,
     )
     wizard = GuideWizard(
       this, harness.view,
       onPrimaryAction = { if (manualLaunchRequired) launchEngine() else startEngineFlow() },
-      onCheckUpdate = { statusCb -> UpdateManager(this).checkAndApply(statusCb) },
+      onCheckUpdate = { statusCb ->
+        // UpdateManager's worker thread reports status directly; the wizard
+        // UI must only be touched on the main thread.
+        UpdateManager(this).checkAndApply { status -> runOnUiThread { statusCb(status) } }
+      },
       onCopyLog = { copyLog() },
       onBackToHarness = { showWeb() },
     )
@@ -182,10 +187,26 @@ class MainActivity : ComponentActivity() {
     if (harness.canGoBack()) harness.goBack() else super.onBackPressed()
   }
 
+  override fun onSaveInstanceState(outState: android.os.Bundle) {
+    super.onSaveInstanceState(outState)
+    picker.saveState(outState)
+  }
+
   override fun onDestroy() {
     super.onDestroy()
     wizard.onDestroy()
-    engineManager.stopEngine()
+    // Screen-on wake lock: release unconditionally — a held lock survives
+    // the activity (and any recreation), keeping the screen on forever and
+    // draining the battery; the page re-requests keep-screen-on after a
+    // recreation.
+    if (wakeLock?.isHeld == true) {
+      wakeLock?.release()
+      wakeLock = null
+    }
+    // The engine keeps running: EngineService owns its lifecycle (watchdog
+    // restarts it on death, stopEngine is only invoked when the service
+    // itself is stopped). Killing it here would destroy a healthy engine the
+    // watchdog then cold-boots again a few seconds later.
   }
 
   /** Report the export result to the WebView: the UI plugin shows an in-app
@@ -356,9 +377,10 @@ class MainActivity : ComponentActivity() {
         AppLog.log("boot", "startEngine() returned false")
         return
       }
-      // Poll up to 30s for the web service.
+      // Poll up to 60s for the web service (cold boot takes 20-45s; a CAS
+      // or cooldown-deferred start can push the answer past 30s).
       var reached = false
-      for (i in 0..30) {
+      for (i in 0..60) {
         if (EngineProbe.check().optBoolean("running", false)) {
           reached = true
           startEngineService()
@@ -433,6 +455,11 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun showWeb() {
+    // Reload only when the page actually failed to load (error page shown
+    // before the engine answered); onResume/pick-return must NOT reload a
+    // healthy page — that discards session UI and races in-flight pick
+    // callbacks.
+    harness.reloadIfFailed()
     wizard.showWeb()
   }
 

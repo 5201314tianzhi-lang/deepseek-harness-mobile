@@ -16,11 +16,17 @@ import java.util.concurrent.TimeUnit
  * Foreground service owning the embedded engine lifecycle: keeps the app
  * process alive while backgrounded (user-visible notification) and restarts
  * the engine process when it dies (watchdog). M2 keep-alive, no root needed.
+ *
+ * Ownership contract: the watchdog ALWAYS arms once the service runs — even
+ * when the engine is currently up, so a later crash gets caught. The engine
+ * process is only stopped when this service itself is stopped (the Activity
+ * never kills it).
  */
 class EngineService : Service() {
 
   private lateinit var engineManager: EngineManager
   private var watchdog: ScheduledExecutorService? = null
+  private var ensureRunner: java.util.concurrent.ExecutorService? = null
 
   override fun onCreate() {
     super.onCreate()
@@ -39,28 +45,55 @@ class EngineService : Service() {
   override fun onDestroy() {
     watchdog?.shutdownNow()
     watchdog = null
+    ensureRunner?.shutdownNow()
+    ensureRunner = null
     // I-12: nothing takes over the engine process after the service dies, so
     // stop it to avoid an orphaned process.
     engineManager.stopEngine()
     super.onDestroy()
   }
 
-  /** Start the engine if not running, then arm the watchdog. */
+  /** Ensure the engine is up, then arm the watchdog. All I/O runs off the
+   *  main thread — EngineProbe.check() does HTTP I/O and would throw
+   *  NetworkOnMainThreadException on the service's main thread (silently
+   *  swallowed → the guard always said "not running" → double starts). */
   private fun ensureEngine() {
-    if (EngineProbe.check().optBoolean("running", false)) return
-    if (engineManager.engineReady && engineManager.startEngine()) {
-      // Watchdog: poll every 5s; if the engine process dies, restart it.
-      if (watchdog == null) {
-        watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
-          exec.scheduleWithFixedDelay({
-            if (!EngineProbe.check().optBoolean("running", false) && engineManager.engineReady) {
-              AppLog.log("watchdog", "engine down, restarting")
-              AppLog.includeFile(java.io.File(this.filesDir, "engine.log"), "engine.log")
-              engineManager.startEngine()
-            }
-          }, 5, 5, TimeUnit.SECONDS)
+    if (ensureRunner == null) {
+      ensureRunner = Executors.newSingleThreadExecutor()
+    }
+    ensureRunner?.execute {
+      try {
+        val running = EngineProbe.check().optBoolean("running", false)
+        if (!running && engineManager.engineReady) {
+          AppLog.log("watchdog", "engine not running, starting")
+          engineManager.startEngine()
         }
+        armWatchdog()
+      } catch (t: Throwable) {
+        AppLog.log("watchdog", "ensureEngine failed", t)
+        // Never give up: try again on the next onStartCommand / restart.
       }
+    }
+  }
+
+  /** Single-flight watchdog: poll every 5s; if the engine process dies (or
+   *  the port stops answering), restart it. Task body is fully guarded — a
+   *  scheduleWithFixedDelay task that throws is silently suppressed forever. */
+  private fun armWatchdog() {
+    if (watchdog != null) return
+    watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
+      exec.scheduleWithFixedDelay({
+        try {
+          val running = EngineProbe.check().optBoolean("running", false)
+          if (!running && engineManager.engineReady) {
+            AppLog.log("watchdog", "engine down, restarting")
+            AppLog.includeFile(java.io.File(this.filesDir, DshPaths.ENGINE_LOG), DshPaths.ENGINE_LOG)
+            engineManager.startEngine()
+          }
+        } catch (t: Throwable) {
+          AppLog.log("watchdog", "watchdog tick failed", t)
+        }
+      }, 5, 5, TimeUnit.SECONDS)
     }
   }
 
@@ -68,15 +101,17 @@ class EngineService : Service() {
     val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
     if (Build.VERSION.SDK_INT >= 26) {
       manager.createNotificationChannel(
-        NotificationChannel("engine", getString(R.string.engine_channel_name), NotificationManager.IMPORTANCE_LOW),
+        NotificationChannel(
+          DshPaths.NOTIFICATION_CHANNEL, "dsh engine", NotificationManager.IMPORTANCE_LOW,
+        ),
       )
     }
+    val content = android.content.Intent(this, MainActivity::class.java)
     val pending = PendingIntent.getActivity(
-      this, 0, Intent(this, MainActivity::class.java),
-      PendingIntent.FLAG_IMMUTABLE,
+      this, 0, content, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
-    return NotificationCompat.Builder(this, "engine")
-      .setSmallIcon(android.R.drawable.stat_notify_chat)
+    return NotificationCompat.Builder(this, DshPaths.NOTIFICATION_CHANNEL)
+      .setSmallIcon(com.dshmobile.shell.R.mipmap.ic_launcher)
       .setContentTitle(getString(R.string.engine_notification_title))
       .setContentText(getString(R.string.engine_notification_text))
       .setContentIntent(pending)
@@ -85,6 +120,6 @@ class EngineService : Service() {
   }
 
   companion object {
-    private const val NOTIFICATION_ID = 2
+    const val NOTIFICATION_ID = 1
   }
 }

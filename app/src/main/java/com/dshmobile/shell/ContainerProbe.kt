@@ -39,8 +39,13 @@ class ContainerProbe(
         b.redirectErrorStream(true)
       }
       val proc = pb.start()
+      // Bounded wait: a hung container chain must not freeze the boot flow
+      // forever (node-side timeout only covers execFileSync itself).
+      if (!proc.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+        AppLog.log("boot", "container smoke probe hung, killing")
+        proc.destroyForcibly()
+      }
       val out = proc.inputStream.bufferedReader().readText()
-      proc.waitFor()
       if (out.contains("CONTAINER_OK")) null else out.trim().take(600)
     } catch (t: Throwable) {
       (t.message ?: t.javaClass.simpleName).take(600)
