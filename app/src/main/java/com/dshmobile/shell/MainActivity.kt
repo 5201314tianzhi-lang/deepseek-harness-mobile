@@ -506,49 +506,24 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * Inject JS polyfills for APIs the OEM system WebView lacks (Android 10
-   * devices often carry 2019-era Chromium; the Harness UI requires newer
-   * primitives like AbortSignal.any — missing them breaks e.g. the directory
-   * picker with "AbortSignal.any is not a function"). Injected at page start,
-   * before the page's own scripts run; guarded so modern WebViews skip it.
+   * Inject the old-WebView compatibility layer (assets/js/compat-polyfills.js)
+   * before the page's own scripts run. Android 10 devices often carry
+   * 2019-era Chromium; the Harness front-end relies on newer runtime APIs
+   * (e.g. AbortSignal.any — missing it broke the directory picker with
+   * "AbortSignal.any is not a function"). All polyfills are guarded, so
+   * modern WebViews are unaffected.
    */
   private fun injectCompatPolyfills(view: WebView) {
-    val polyfills = """
-      (function() {
-        if (typeof AbortSignal === 'undefined') return;
-        if (!AbortSignal.any) {
-          AbortSignal.any = function(signals) {
-            var c = new AbortController();
-            var abort = function() { c.abort(); };
-            signals = signals || [];
-            for (var i = 0; i < signals.length; i++) {
-              if (signals[i].aborted) { abort(); break; }
-              signals[i].addEventListener('abort', abort);
-            }
-            c.signal.addEventListener('abort', function() {
-              for (var i = 0; i < signals.length; i++) {
-                signals[i].removeEventListener('abort', abort);
-              }
-            });
-            return c.signal;
-          };
-        }
-        if (!AbortSignal.timeout) {
-          AbortSignal.timeout = function(ms) {
-            var c = new AbortController();
-            setTimeout(function() { c.abort(new DOMException('The operation timed out.', 'TimeoutError')); }, ms);
-            return c.signal;
-          };
-        }
-        if (!AbortSignal.prototype.throwIfAborted) {
-          AbortSignal.prototype.throwIfAborted = function() {
-            if (this.aborted) throw this.reason;
-          };
-        }
-      })();
-    """
-    view.evaluateJavascript(polyfills, null)
+    try {
+      val js = polyfillsJs ?: assets.open("js/compat-polyfills.js").bufferedReader().use { it.readText() }
+        .also { polyfillsJs = it }
+      view.evaluateJavascript(js, null)
+    } catch (t: Throwable) {
+      AppLog.log("web", "polyfill inject failed", t)
+    }
   }
+
+  private var polyfillsJs: String? = null
 
   /**
    * Engine-source check: exact match of the local engine's scheme/host/port
