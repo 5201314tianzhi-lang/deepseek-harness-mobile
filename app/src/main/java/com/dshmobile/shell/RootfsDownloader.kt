@@ -6,6 +6,8 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 
 /**
  * Downloads the official Ubuntu base tarball (cdimage.ubuntu.com), verifies it
@@ -90,7 +92,7 @@ object RootfsDownloader {
 
       rootfs.deleteRecursively()
       rootfs.mkdirs()
-      extractTarGz(context, tmp, rootfs)
+      extractTarGz(tmp, rootfs)
       File(rootfs, ".ready").writeText(BASE_URL + tarballName)
       AppLog.log("rootfs", "rootfs installed at " + rootfs.absolutePath)
       tmp.delete()
@@ -118,17 +120,13 @@ object RootfsDownloader {
     }
   }
 
-  private fun extractTarGz(context: Context, tarGz: File, dest: File) {
-    // Prefer the snapshot's tar (absolute path, always present); fall back to
-    // PATH resolution. The exec-hook reroutes the snapshot ELF via linker64.
-    val tarBin = File(context.filesDir, "usr/bin/tar")
-    val p = ProcessBuilder(
-      if (tarBin.isFile) tarBin.absolutePath else "tar",
-      "-xzf", tarGz.absolutePath, "-C", dest.absolutePath,
-    ).start()
-    p.waitFor()
-    if (p.exitValue() != 0) {
-      throw RuntimeException("tar extract failed with " + p.exitValue())
+  private fun extractTarGz(tarGz: File, dest: File) {
+    // Pure-Java extraction (no child process): app-data ELF exec is denied on
+    // Android 10+ vendors (EACCES), and this path has no exec-hook protection.
+    GzipCompressorInputStream(tarGz.inputStream().buffered()).use { gz ->
+      val tar = TarArchiveInputStream(gz)
+      SnapshotExtractor.extractTar(tar, dest)
+      tar.close()
     }
   }
 }

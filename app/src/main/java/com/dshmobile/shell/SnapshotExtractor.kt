@@ -30,9 +30,22 @@ object SnapshotExtractor {
   fun extract(input: InputStream, totalBytes: Long, dest: File, onProgress: (Long, Long) -> Unit) {
     val xz = XZCompressorInputStream(input)
     val tar = TarArchiveInputStream(xz)
+    extractTar(tar, dest) { done -> onProgress(done, totalBytes) }
+    tar.close()
+  }
+
+  /**
+   * Extract a (already decompressed) tar stream into dest with the shared
+   * policy: traversal guard, symlink preservation, owner-only permissions,
+   * exec-bit enforcement with W^X write-bit stripping, and the Android exec
+   * attribute stamp on executables. Also used by the rootfs downloader.
+   * @param onProgress bytesDone.
+   */
+  fun extractTar(tar: TarArchiveInputStream, dest: File, onProgress: (Long) -> Unit = {}) {
     val execFiles = mutableListOf<String>()
     val destCanonical = dest.canonicalPath
     var done = 0L
+    var lastReported = 0L
     var entry: TarArchiveEntry? = tar.nextEntry
     while (entry != null) {
       // Traversal guard (I-02): every entry name must resolve inside dest.
@@ -92,10 +105,13 @@ object SnapshotExtractor {
         }
       }
       done += entry.size
-      if (done % (1024 * 1024) < entry.size) onProgress(done, totalBytes)
+      if (done - lastReported >= 1024L * 1024L) {
+        lastReported = done
+        onProgress(done)
+      }
       entry = tar.nextEntry
     }
-    tar.close()
+    onProgress(done)
     stampExecAttribute(execFiles)
   }
 
