@@ -1,4 +1,4 @@
-# dsh-mobile-apk
+# deepseek-harness-mobile
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) 的 Android 壳，
 应用名 **深度编码**：**内嵌 Termux 运行时快照**（解压即跑，无需安装 Termux）+ WebView UI，

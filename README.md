@@ -1,4 +1,4 @@
-# dsh-mobile-apk
+# deepseek-harness-mobile
 
 Android shell for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh),
 app name **深度编码**: a WebView UI over an **embedded Termux runtime snapshot**
