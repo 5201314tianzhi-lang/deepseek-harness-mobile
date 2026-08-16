@@ -51,11 +51,10 @@ class MainActivity : ComponentActivity() {
     )
   }
 
-  companion object {
-    /** Debug-only update trigger (see onCreate); derived from the package so
-     *  a package rename never leaves a stale action literal. */
-    val ACTION_UPDATE: String get() = packageName + ".action.UPDATE"
-  }
+  /** Debug-only update trigger (see onCreate); derived from the package so
+   *  a package rename never leaves a stale action literal. */
+  private val actionUpdate: String get() = packageName + ".action.UPDATE"
+
 
   /** AGP 8 does not generate BuildConfig by default; use the debuggable flag. */
   private val isDebuggable: Boolean
@@ -124,7 +123,7 @@ class MainActivity : ComponentActivity() {
       wizard.guideView.visibility = View.VISIBLE
     }
     // Testable update trigger: adb am start -n .../.MainActivity -a com.dshmobile.shell.action.UPDATE
-    if (intent?.action == ACTION_UPDATE) {
+    if (intent?.action == actionUpdate) {
       // I-03: the activity is exported (LAUNCHER), so any app can fire this
       // intent and trigger the download+execute chain — accept it only in
       // debug builds and ignore it in release.
