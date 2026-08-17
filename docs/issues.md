@@ -256,5 +256,7 @@ EACCES。叠加因素：wrapper 生成后保留写位（rwxr-xr-x），违反厂
 
 **修复**：解释器改系统 `#!/system/bin/sh`（恒可 exec，且其 exec proot 走
 libc、hook 重路由仍生效）；升级标记由 `/root/projects` 改为新 shebang
-（旧 v0.1.1 wrapper 含旧标记，必须触发重写）；生成后剥离写位（W^X），
-重写前恢复写位；删除不再使用的 `DshPaths.SH_BIN`。
+（旧 v0.1.1 wrapper 含旧标记，必须触发重写）；生成后显式 chmod 555（读+
+执行全用户，写位全移除，v0.1.3 强化：当前格式 wrapper 若被快照重解压等
+操作写回写位，会被重新加固而非被标记短路）；重写前恢复写位；删除不再
+使用的 `DshPaths.SH_BIN`。

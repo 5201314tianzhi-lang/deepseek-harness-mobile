@@ -172,6 +172,20 @@ class ProotRuntimeTest {
   }
 
   @Test
+  fun `wrapper rewrite restrips a writable current wrapper`() {
+    // A current (system-shebang) wrapper that regained the write bit (e.g.
+    // snapshot re-extraction restoring modes) must be re-hardened, not
+    // skipped by the marker check — vendors refuse to exec writable files.
+    assertTrue(runtime.ensureWrapper())
+    val bash = File(context.filesDir, DshPaths.USR_DIR + "/bin/bash")
+    bash.setWritable(true, false)
+    assertTrue(bash.canWrite())
+    assertTrue(runtime.ensureWrapper())
+    assertFalse(bash.canWrite())
+    assertTrue(wrapperText().startsWith("#!/system/bin/sh"))
+  }
+
+  @Test
   fun `workspace host dir is created`() {
     runtime.ensureWrapper()
     assertTrue(File(context.filesDir, "dshdata-projects").isDirectory)

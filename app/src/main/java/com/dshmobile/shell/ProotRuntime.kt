@@ -117,16 +117,20 @@ class ProotRuntime(
     val bash = File(usrDir, DshPaths.BASH_BIN)
     val termux = File(usrDir, DshPaths.BASH_BIN + ".termux")
     // Wrapper considered current when it routes via proot AND uses the system
-    // shell as its interpreter. The v0.1.x wrapper shebang pointed at the
-    // snapshot's usr/bin/sh — an app-data ELF whose kernel-level shebang exec
-    // the exec-hook cannot reroute (LD_PRELOAD only sees libc execve), so on
-    // devices with the app-data exec ban (Android 15+, vendor W^X) the whole
-    // container chain died with EACCES. The system shell is always exec-able;
-    // its exec of proot goes through libc and the hook, so the reroute still
-    // applies. Older installs are rewritten in place.
+    // shell as its interpreter AND is W^X-hardened (not writable). The
+    // v0.1.x wrapper shebang pointed at the snapshot's usr/bin/sh — an
+    // app-data ELF whose kernel-level shebang exec the exec-hook cannot
+    // reroute (LD_PRELOAD only sees libc execve), so on devices with the
+    // app-data exec ban (Android 15+, vendor W^X) the whole container chain
+    // died with EACCES. The system shell is always exec-able; its exec of
+    // proot goes through libc and the hook, so the reroute still applies.
+    // Older installs are rewritten in place; a current-format wrapper that
+    // regained the write bit (e.g. snapshot re-extraction restoring modes)
+    // is re-hardened, not skipped by the marker check.
     val wrapperUpToDate =
       bash.isFile && termux.isFile &&
-        bash.readText(Charsets.US_ASCII).contains(bashWrapperShebang)
+        bash.readText(Charsets.US_ASCII).contains(bashWrapperShebang) &&
+        !bash.canWrite()
     if (wrapperUpToDate) return true
     if (bash.isFile && !bash.readText(Charsets.US_ASCII).contains("#!")) {
       if (!bash.renameTo(termux)) return false
@@ -156,8 +160,12 @@ class ProotRuntime(
       """.trimIndent()
     bash.setWritable(true, false) // a W^X-stripped wrapper from a prior run is read-only
     bash.writeText(wrapper)
-    bash.setExecutable(true, true)
-    bash.setWritable(false, false) // W^X: vendors refuse to exec a writable wrapper
+    // W^X hardening — explicit 555: read+exec for owner/group/others, write
+    // bit removed for everyone. Vendor security policies (EMUI W^X) refuse
+    // to exec a writable+executable file, so the write bit must be gone.
+    bash.setReadable(true, false)
+    bash.setExecutable(true, false)
+    bash.setWritable(false, false)
     AppLog.log("proot", "bash wrapper installed -> " + bash.absolutePath)
     return true
   }
