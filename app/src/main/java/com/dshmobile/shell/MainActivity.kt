@@ -79,6 +79,24 @@ class MainActivity : ComponentActivity() {
     )
   }
 
+  /** Follow the system theme for the window bars (light/dark auto). */
+  private fun applyTheme() {
+    val palette = GuidePalette(this)
+    window.statusBarColor = palette.background
+    window.navigationBarColor = palette.background
+    val lightFlags =
+      if (palette.dark) {
+        window.decorView.systemUiVisibility and
+          android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() and
+          android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+      } else {
+        window.decorView.systemUiVisibility or
+          android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+          android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+      }
+    window.decorView.systemUiVisibility = lightFlags
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     AppLog.init(this)
@@ -108,7 +126,10 @@ class MainActivity : ComponentActivity() {
         picker,
         export,
         onNotify,
-        onEngineError = { showGuide() },
+        onEngineError = {
+          showGuide()
+          wizard.showTopBar(BarState.FAILED)
+        },
         onKeepScreen = { keepScreenOn(it) },
         pickToken = EngineManager.pickToken,
       )
@@ -123,21 +144,32 @@ class MainActivity : ComponentActivity() {
           UpdateManager(this).checkAndApply { status -> runOnUiThread { statusCb(status) } }
         },
         onCopyLog = { copyLog() },
-        onBackToHarness = { showWeb() },
+        onBackToHarness = { showWeb(null) },
         onKeepAlive = { showKeepAlivePanel() },
+        onOpenLog = { wizard.openLogPanel() },
+        onReload = { harness.view.loadUrl(EngineProbe.ENGINE_URL) },
       )
 
     val root =
       FrameLayout(this).apply {
-        setBackgroundColor(0xFFFFFFFF.toInt())
+        setBackgroundColor(GuidePalette(this).background)
       }
     root.addView(harness.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     root.addView(
       wizard.topStatusBar,
-      FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.TOP),
+      FrameLayout
+        .LayoutParams(
+          ViewGroup.LayoutParams.WRAP_CONTENT,
+          ViewGroup.LayoutParams.WRAP_CONTENT,
+          android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL,
+        ).apply {
+          topMargin = (12 * resources.displayMetrics.density).toInt()
+        },
     )
     root.addView(wizard.guideView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    root.addView(wizard.logPanelView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     setContentView(root)
+    applyTheme()
     harness.configure()
 
     // Quick path: snapshot AND mandatory container already provisioned →
@@ -178,6 +210,7 @@ class MainActivity : ComponentActivity() {
   override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
     super.onConfigurationChanged(newConfig)
     harness.pushSystemDark()
+    applyTheme()
   }
 
   override fun onBackPressed() {
@@ -353,7 +386,7 @@ class MainActivity : ComponentActivity() {
         // Quick path: everything provisioned → cold start under the thin bar.
         runOnUiThread {
           harness.view.visibility = View.VISIBLE
-          wizard.showTopBar(getString(R.string.status_engine_starting))
+          wizard.showTopBar(BarState.STARTING)
         }
         launchEngineInternal()
       } catch (t: Throwable) {
@@ -523,12 +556,15 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  private fun showWeb() {
+  /** Show the Harness; a null [barState] keeps the current bar state (the
+   *  FAILED bar must persist when returning from the error guide, I-26). */
+  private fun showWeb(barState: BarState? = BarState.SUCCESS) {
     // Reload only when the page actually failed to load (error page shown
     // before the engine answered); onResume/pick-return must NOT reload a
     // healthy page — that discards session UI and races in-flight pick
     // callbacks.
     harness.reloadIfFailed()
+    if (barState != null) wizard.showTopBar(barState)
     wizard.showWeb()
   }
 
