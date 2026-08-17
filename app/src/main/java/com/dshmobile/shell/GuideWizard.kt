@@ -14,6 +14,10 @@ import androidx.activity.ComponentActivity
  * cold-start bar overlaying the Harness. Pure presentation — all flow
  * decisions live in the caller through the injected callbacks.
  */
+/** Cold-start bar states: STARTING breathes, FAILED persists (I-26: a failed
+ *  boot must always leave an exit), SUCCESS fades away after a delay. */
+enum class BarState { STARTING, FAILED, SUCCESS }
+
 class GuideWizard(
   private val activity: ComponentActivity,
   private val webView: android.webkit.WebView,
@@ -46,6 +50,10 @@ class GuideWizard(
   private var topPulseAnimator: android.animation.ValueAnimator? = null
 
   private val d: Float get() = activity.resources.displayMetrics.density
+
+  private val INTERPOLATOR = android.animation.PathInterpolator(0.16f, 1f, 0.3f, 1f)
+
+  private var currentBarState: BarState? = null
 
   // ---- Public state API -------------------------------------------------
 
@@ -131,15 +139,18 @@ class GuideWizard(
     // NOTE: no reload here — MainActivity reloads only when the page had
     // failed to load; a blanket reload on every show would discard the page
     // state (and race picker callbacks) on each return to foreground.
-    // Engine is up — keep the breathing dot visible a few seconds longer
-    // (cold-start transition) before fading the bar away, so the pulse
-    // animation is actually seen instead of vanishing immediately.
-    scheduleTopBarHide(6000L)
+    // SUCCESS keeps the 6s fade (pulse visible during the cold-start
+    // transition); FAILED must persist — a failed boot always leaves an
+    // exit (I-26). When no bar was shown, nothing to hide.
+    val state = currentBarState
+    if (state != null && state != BarState.FAILED) scheduleTopBarHide(6000L)
   }
 
-  /** Slide the thin status bar in (cold start over the Harness). */
-  fun showTopBar(title: String) {
+  /** Show the cold-start pill: STARTING breathes, FAILED persists (I-26),
+   *  SUCCESS fades after 6s. Slide-in from -32dp. */
+  fun showTopBar(state: BarState) {
     cancelScheduledTopBarHide()
+    currentBarState = state
     guideView.visibility = View.GONE
     webView.visibility = View.VISIBLE
     webView
@@ -147,14 +158,32 @@ class GuideWizard(
       .alpha(1f)
       .setDuration(150)
       .start()
-    topStatusLabel?.text = title
+    val palette = GuidePalette(activity)
+    val dotColor =
+      when (state) {
+        BarState.STARTING -> palette.accent
+        BarState.FAILED -> palette.error
+        BarState.SUCCESS -> palette.success
+      }
+    topPulseDot?.backgroundTintList = android.content.res.ColorStateList.valueOf(dotColor)
+    topStatusLabel?.text =
+      when (state) {
+        BarState.STARTING -> activity.getString(R.string.status_engine_starting)
+        BarState.FAILED -> activity.getString(R.string.bar_failed)
+        BarState.SUCCESS -> activity.getString(R.string.bar_success)
+      }
     topStatusBar.visibility = View.VISIBLE
+    topStatusBar.alpha = 0f
+    topStatusBar.translationY = (-32 * d)
     topStatusBar
       .animate()
       .alpha(1f)
-      .setDuration(200)
+      .translationY(0f)
+      .setDuration(250)
+      .setInterpolator(INTERPOLATOR)
       .start()
-    startTopBarPulse()
+    if (state == BarState.STARTING) startTopBarPulse() else stopTopBarPulse()
+    if (state == BarState.SUCCESS) scheduleTopBarHide(6000L)
   }
 
   /** Public so failure paths can stop the pulse and dismiss the bar. */
@@ -661,11 +690,12 @@ class GuideWizard(
     return row
   }
 
-  /** Thin cold-start bar overlaying the Harness: pulse dot + status, taps to
-   *  open the full-screen guide. */
+  /** Floating cold-start pill overlaying the Harness: tinted pulse dot +
+   *  status + trailing chevron; taps open the full-screen guide. */
   private lateinit var topStatusLabel: TextView
 
   private fun buildTopStatusBar(): LinearLayout {
+    val palette = GuidePalette(activity)
     val dot =
       View(activity).apply {
         background = activity.getDrawable(com.dshmobile.shell.R.drawable.status_dot)
@@ -675,23 +705,37 @@ class GuideWizard(
     topPulseDot = dot
     val label =
       TextView(activity).apply {
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
+        setTextColor(palette.textPrimary)
         textSize = 13f
         typeface = android.graphics.Typeface.DEFAULT_BOLD
-        setPadding((10 * d).toInt(), 0, 0, 0)
+        setPadding((10 * d).toInt(), 0, (6 * d).toInt(), 0)
       }
     topStatusLabel = label
+    val chevron =
+      TextView(activity).apply {
+        text = "›"
+        setTextColor(palette.textSecondary)
+        textSize = 16f
+      }
     val bar =
       LinearLayout(activity).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = android.view.Gravity.CENTER_VERTICAL
-        setPadding((20 * d).toInt(), (10 * d).toInt(), (20 * d).toInt(), (10 * d).toInt())
-        setBackgroundColor(0xE6FFFFFF.toInt())
+        setPadding((16 * d).toInt(), (9 * d).toInt(), (14 * d).toInt(), (9 * d).toInt())
+        background =
+          android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = (22 * d)
+            setColor(palette.card)
+            alpha = 230
+            setStroke((1 * d).toInt(), palette.hairline)
+          }
         visibility = View.GONE
         setOnClickListener { showGuideFromTopBar() }
       }
     bar.addView(dot)
     bar.addView(label)
+    bar.addView(chevron)
     bar.elevation = (6 * d)
     return bar
   }
