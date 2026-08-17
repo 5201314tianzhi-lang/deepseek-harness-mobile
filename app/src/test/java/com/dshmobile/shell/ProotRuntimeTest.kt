@@ -124,7 +124,7 @@ class ProotRuntimeTest {
   fun `wrapper upgrade rewrites an old workspace-based wrapper`() {
     File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").writeText("orig")
     File(context.filesDir, DshPaths.USR_DIR + "/bin/bash").writeText(
-      "#!/system/bin/sh\nold wrapper with /root/workspace and PROOT_TMP_DIR=yes\n",
+      "#!/x\nold wrapper with /root/workspace and PROOT_TMP_DIR=yes\n",
     )
     assertTrue(runtime.ensureWrapper())
     assertTrue(wrapperText().contains("/root/projects"))
@@ -161,10 +161,10 @@ class ProotRuntimeTest {
     // must restore write access before writing the new content.
     assertTrue(runtime.ensureWrapper())
     val bash = File(context.filesDir, DshPaths.USR_DIR + "/bin/bash")
-    bash.setWritable(false, false)
+    bash.setWritable(true, false)
     File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").writeText("orig")
     bash.writeText("#!/system/bin/sh\nstale marker\n")
-    bash.setWritable(false, false)
+    bash.setWritable(false, false) // simulate the W^X-stripped stale wrapper
     assertTrue(runtime.ensureWrapper())
     assertTrue(wrapperText().startsWith("#!/system/bin/sh"))
     assertTrue(wrapperText().contains("/root/projects"))
