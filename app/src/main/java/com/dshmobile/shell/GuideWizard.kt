@@ -57,12 +57,24 @@ class GuideWizard(
   private var prevDone = 0
   private var topPulseDot: View? = null
   private var topPulseAnimator: android.animation.ValueAnimator? = null
+  private lateinit var logPanel: LogPanel
 
   private val d: Float get() = activity.resources.displayMetrics.density
 
   private val INTERPOLATOR = android.animation.PathInterpolator(0.16f, 1f, 0.3f, 1f)
 
   private var currentBarState: BarState? = null
+
+  init {
+    logPanel =
+      LogPanel(
+        activity,
+        buildVersionLineText(),
+        onCopy = { onCopyLog() },
+        onShare = { text -> shareLog(text) },
+        onClose = { logPanel.close() },
+      )
+  }
 
   // ---- Public state API -------------------------------------------------
 
@@ -877,6 +889,29 @@ class GuideWizard(
     keepAliveBlock?.visibility = View.GONE
     statusCard?.visibility = View.VISIBLE
     actionRow?.visibility = View.VISIBLE
+  }
+
+  /** The log-viewer overlay view; the caller adds it on top of everything. */
+  val logPanelView: View get() = logPanel.view
+
+  /** Reveal the diagnostic log overlay (copy / share / close). */
+  fun openLogPanel() {
+    logPanel.open()
+  }
+
+  /** ACTION_SEND (text/plain) — no storage permission needed. */
+  private fun shareLog(text: String) {
+    val intent =
+      android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_TEXT, text)
+      }
+    try {
+      activity.startActivity(
+        android.content.Intent.createChooser(intent, activity.getString(R.string.log_share_title)),
+      )
+    } catch (_: Throwable) {
+    }
   }
 
   /** Vertical three-step card list (runtime → container → launch). Each row
