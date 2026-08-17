@@ -246,44 +246,106 @@ class GuideWizard(
     showGuide()
   }
 
-  /** Render the wizard steps: done (filled + check), active (ring), pending (outline). */
+  /** Render the step cards from the (done, active) counters: done rows show a
+   *  green check (first appearance pops in at scale 0.9), the active row
+   *  breathes, pending rows stay quiet. */
   fun renderSteps(
     done: Int,
     active: Int,
   ) {
-    for (i in stepDots.indices) {
-      val dot = stepDots[i]
-      dot.background =
-        activity.getDrawable(
-          when {
-            i < done -> com.dshmobile.shell.R.drawable.step_done
-            i == active -> com.dshmobile.shell.R.drawable.step_active
-            else -> com.dshmobile.shell.R.drawable.step_pending
-          },
-        )
-      val label = stepLabels[i]
-      label.setTextColor(
-        activity.resources.getColor(
-          if (i <= done) {
-            com.dshmobile.shell.R.color.text_primary
-          } else {
-            com.dshmobile.shell.R.color.text_secondary
-          },
-          null,
-        ),
-      )
-      if (i < done) {
-        dot.text = "✓"
-        dot.setTextColor(0xFFFFFFFF.toInt())
-      } else {
-        dot.text = ""
+    val model = StepModel(done, active)
+    val palette = GuidePalette(activity)
+    stopStepPulse()
+    stepActiveGlyph = null
+    for (i in stepCircles.indices) {
+      val state = model.state(i)
+      val circle = stepCircles[i]
+      val glyph = stepGlyphs[i]
+      val statusText = stepStatusTexts[i]
+      val circleColor =
+        when (state) {
+          StepState.DONE -> palette.success
+          StepState.ACTIVE -> palette.accent
+          StepState.PENDING -> palette.hairline
+        }
+      circle.background =
+        android.graphics.drawable.GradientDrawable().apply {
+          shape = android.graphics.drawable.GradientDrawable.OVAL
+          setColor(circleColor)
+        }
+      when (state) {
+        StepState.DONE -> {
+          circle.text = "✓"
+          glyph.text = "✓"
+          glyph.background = null
+          glyph.setTextColor(palette.success)
+          statusText.setTextColor(palette.textSecondary)
+          statusText.text = activity.getString(R.string.step_status_done)
+        }
+
+        StepState.ACTIVE -> {
+          circle.text = (i + 1).toString()
+          glyph.text = ""
+          glyph.background = null
+          statusText.setTextColor(palette.accent)
+          statusText.text = activity.getString(R.string.step_status_active)
+          stepActiveGlyph = glyph
+        }
+
+        StepState.PENDING -> {
+          circle.text = (i + 1).toString()
+          glyph.text = ""
+          glyph.background = null
+          statusText.setTextColor(palette.textSecondary)
+          statusText.text = activity.getString(R.string.step_status_pending)
+        }
       }
     }
+    // Newly-done rows pop in (scale 0.9 → 1); the first render stays static.
+    if (done > prevDone && !firstStepRender) {
+      for (i in prevDone until done) {
+        val card = stepCards.getOrNull(i) ?: continue
+        card.alpha = 0f
+        card.scaleX = 0.9f
+        card.scaleY = 0.9f
+        card
+          .animate()
+          .alpha(1f)
+          .scaleX(1f)
+          .scaleY(1f)
+          .setDuration(200)
+          .setInterpolator(INTERPOLATOR)
+          .start()
+      }
+    }
+    prevDone = done
+    firstStepRender = false
+    if (stepActiveGlyph != null) startStepPulse()
+  }
+
+  /** Breathing alpha on the active step-card glyph. */
+  private fun startStepPulse() {
+    val glyph = stepActiveGlyph ?: return
+    stepPulseAnimator?.cancel()
+    val animator = android.animation.ValueAnimator.ofFloat(1f, 0.25f)
+    animator.duration = 900
+    animator.repeatMode = android.animation.ValueAnimator.REVERSE
+    animator.repeatCount = android.animation.ValueAnimator.INFINITE
+    animator.addUpdateListener { glyph.alpha = it.animatedValue as Float }
+    animator.start()
+    stepPulseAnimator = animator
+  }
+
+  private fun stopStepPulse() {
+    stepPulseAnimator?.cancel()
+    stepPulseAnimator = null
+    stepActiveGlyph?.alpha = 1f
   }
 
   fun onDestroy() {
     cancelScheduledTopBarHide()
     stopTopBarPulse()
+    stopStepPulse()
   }
 
   // ---- Construction -----------------------------------------------------
@@ -569,70 +631,119 @@ class GuideWizard(
     actionRow?.visibility = View.VISIBLE
   }
 
-  /** Horizontal three-step indicator (runtime → container → launch). */
-  private fun buildStepIndicator(): LinearLayout {
+  /** Vertical three-step card list (runtime → container → launch). Each row
+   *  is a hairline shell card with an inset inner: numbered circle + title +
+   *  status text + trailing state glyph (✓ done / breathing dot active). */
+  private fun buildStepCards(): LinearLayout {
+    val palette = GuidePalette(activity)
     val names =
       listOf(
         activity.getString(R.string.step_runtime),
         activity.getString(R.string.step_container),
         activity.getString(R.string.step_launch),
       )
-    val dots = arrayOfNulls<TextView>(3)
-    val labels = arrayOfNulls<TextView>(3)
-    val row =
+    val circles = arrayOfNulls<TextView>(3)
+    val glyphs = arrayOfNulls<TextView>(3)
+    val statusTexts = arrayOfNulls<TextView>(3)
+    val cards = arrayOfNulls<LinearLayout>(3)
+    val list =
       LinearLayout(activity).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = android.view.Gravity.CENTER_HORIZONTAL
+        orientation = LinearLayout.VERTICAL
         layoutParams =
-          LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = (36 * d).toInt()
-            leftMargin = (24 * d).toInt()
-            rightMargin = (24 * d).toInt()
-          }
+          LinearLayout
+            .LayoutParams(
+              ViewGroup.LayoutParams.MATCH_PARENT,
+              ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+              topMargin = (32 * d).toInt()
+            }
       }
-    val circleSize = (28 * d).toInt()
     for (i in 0..2) {
-      val dot =
+      val circle =
         TextView(activity).apply {
-          textSize = 14f
+          textSize = 12f
           typeface = android.graphics.Typeface.DEFAULT_BOLD
           gravity = android.view.Gravity.CENTER
-          layoutParams = LinearLayout.LayoutParams(circleSize, circleSize)
+          setTextColor(0xFFFFFFFF.toInt())
+          val size = (24 * d).toInt()
+          layoutParams = LinearLayout.LayoutParams(size, size)
         }
-      dots[i] = dot
-      val label =
+      circles[i] = circle
+      val title =
         TextView(activity).apply {
           text = names[i]
-          textSize = 11f
-          setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
-          gravity = android.view.Gravity.CENTER
-          setPadding(0, (6 * d).toInt(), 0, 0)
+          textSize = 15f
+          typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+          setTextColor(palette.textPrimary)
+          setPadding((12 * d).toInt(), 0, 0, 0)
         }
-      labels[i] = label
-      val cell =
+      val status =
+        TextView(activity).apply {
+          textSize = 13f
+          setPadding((12 * d).toInt(), (2 * d).toInt(), 0, 0)
+        }
+      statusTexts[i] = status
+      val titleColumn =
         LinearLayout(activity).apply {
           orientation = LinearLayout.VERTICAL
-          gravity = android.view.Gravity.CENTER_HORIZONTAL
-          layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT).apply { weight = 1f }
+          layoutParams =
+            LinearLayout
+              .LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+              ).apply {
+                weight = 1f
+              }
         }
-      cell.addView(dot)
-      cell.addView(label)
-      row.addView(cell)
-      if (i < 2) {
-        val line =
-          View(activity).apply {
-            background = activity.getDrawable(com.dshmobile.shell.R.drawable.divider)
-            val lp = LinearLayout.LayoutParams(0, (1 * d).toInt())
-            lp.weight = 1f
-            lp.topMargin = (circleSize / 2 - (1 * d).toInt()).toInt()
-            layoutParams = lp
-          }
-        row.addView(line)
-      }
+      titleColumn.addView(title)
+      titleColumn.addView(status)
+      val glyph =
+        TextView(activity).apply {
+          textSize = 11f
+          typeface = android.graphics.Typeface.DEFAULT_BOLD
+          gravity = android.view.Gravity.CENTER
+          val size = (22 * d).toInt()
+          layoutParams = LinearLayout.LayoutParams(size, size)
+        }
+      glyphs[i] = glyph
+      val body =
+        LinearLayout(activity).apply {
+          orientation = LinearLayout.HORIZONTAL
+          gravity = android.view.Gravity.CENTER_VERTICAL
+          setPadding((16 * d).toInt(), (14 * d).toInt(), (16 * d).toInt(), (14 * d).toInt())
+          addView(circle)
+          addView(titleColumn)
+          addView(glyph)
+        }
+      val inset =
+        LinearLayout(activity).apply {
+          orientation = LinearLayout.VERTICAL
+          background = activity.getDrawable(com.dshmobile.shell.R.drawable.inset_bg)
+          addView(body)
+        }
+      val card =
+        LinearLayout(activity).apply {
+          orientation = LinearLayout.VERTICAL
+          background = activity.getDrawable(com.dshmobile.shell.R.drawable.card_bg)
+          setPadding((4 * d).toInt(), (4 * d).toInt(), (4 * d).toInt(), (4 * d).toInt())
+          layoutParams =
+            LinearLayout
+              .LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+              ).apply {
+                bottomMargin = (12 * d).toInt()
+              }
+        }
+      card.addView(inset)
+      cards[i] = card
+      list.addView(card)
     }
-    stepDots = dots.map { it!! }.toTypedArray()
-    stepLabels = labels.map { it!! }.toTypedArray()
-    return row
+    stepCircles = circles.map { it!! }.toTypedArray()
+    stepGlyphs = glyphs.map { it!! }.toTypedArray()
+    stepStatusTexts = statusTexts.map { it!! }.toTypedArray()
+    stepCards = cards.map { it!! }.toTypedArray()
+    return list
   }
 
   /** Floating cold-start pill overlaying the Harness: tinted pulse dot +
