@@ -24,7 +24,7 @@ class ProotRuntime(
    * shell is always exec-able, and its exec of proot goes through libc so
    * the hook reroute still applies.
    */
-  private val BASH_WRAPPER_SHEBANG = "#!/system/bin/sh"
+  private val bashWrapperShebang = "#!/system/bin/sh"
 
   val prootDir: File get() = File(context.filesDir, "proot")
   val prootBin: File get() = File(prootDir, "proot")
@@ -126,7 +126,7 @@ class ProotRuntime(
     // applies. Older installs are rewritten in place.
     val wrapperUpToDate =
       bash.isFile && termux.isFile &&
-        bash.readText(Charsets.US_ASCII).contains(BASH_WRAPPER_SHEBANG)
+        bash.readText(Charsets.US_ASCII).contains(bashWrapperShebang)
     if (wrapperUpToDate) return true
     if (bash.isFile && !bash.readText(Charsets.US_ASCII).contains("#!")) {
       if (!bash.renameTo(termux)) return false
@@ -137,7 +137,7 @@ class ProotRuntime(
     val hostTmp = File(context.filesDir, "home/tmp").apply { mkdirs() }.absolutePath
     val wrapper =
       """
-      $BASH_WRAPPER_SHEBANG
+      $bashWrapperShebang
       if [ ! -x "${rootfsDir.absolutePath}/${DshPaths.ROOTFS_BASH}" ]; then
         echo "Ubuntu container not installed" >&2
         exit 127
