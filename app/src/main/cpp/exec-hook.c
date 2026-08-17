@@ -16,6 +16,13 @@
  *
  * The LD_PRELOAD environment variable propagates to every process loaded via
  * linker64, so the reroute covers the whole process tree.
+ *
+ * Android-specific fixes layered on top:
+ * - dsh's PTY shell spawns "/bin/bash" by absolute path, which only exists
+ *   inside the proot rootfs — rewritten to the usr/bin/bash wrapper ELF.
+ * - dsh strips DSH_* variables from harness children, but the wrapper needs
+ *   DSH_FILES_DIR/DSH_WORKSPACE to locate the proot tree — re-injected into
+ *   the child environment when the wrapper itself is exec'd.
  */
 
 #define _GNU_SOURCE
@@ -87,6 +94,63 @@ static int exec_via_linker(const char *path, char *const argv[],
   return r;
 }
 
+/* dsh's PTY shell (dsh-terminal-bash) spawns "/bin/bash" by absolute path,
+ * but the Android host has no /bin/bash — the only bash on device lives
+ * inside the proot rootfs, reached through the usr/bin/bash wrapper ELF.
+ * The spawn fails with ENOENT (node-pty reports "PTY shell exited during
+ * startup"). Rewrite it to the wrapper whenever DSH_FILES_DIR is known. */
+static const char *maybe_bash_rewrite(const char *path) {
+  if (!path || strcmp(path, "/bin/bash") != 0) return NULL;
+  const char *files = getenv("DSH_FILES_DIR");
+  if (!files || !*files) return NULL;
+  static char wrap[4096];
+  int n = snprintf(wrap, sizeof wrap, "%s/usr/bin/bash", files);
+  if (n < 0 || (size_t)n >= sizeof wrap) return NULL;
+  return wrap;
+}
+
+/* dsh strips every DSH_* variable from harness children (scrubbedParentEnv),
+ * but the bash wrapper resolves its whole proot layout from
+ * DSH_FILES_DIR/DSH_WORKSPACE and dies with exit 126 when they are missing —
+ * so every agent command fails. When a child execs the wrapper, re-inject
+ * both variables from our own environment (the engine process always has
+ * them). Non-wrapper execs keep the caller's envp untouched. */
+static char *const *env_with_bash_paths(const char *path, char *const envp[]) {
+  const char *files = getenv("DSH_FILES_DIR");
+  if (!files || !*files) return envp;
+  static char wrap[4096];
+  int n = snprintf(wrap, sizeof wrap, "%s/usr/bin/bash", files);
+  if (n < 0 || (size_t)n >= sizeof wrap || !path || strcmp(path, wrap) != 0)
+    return envp;
+  size_t count = 0;
+  if (envp) while (envp[count]) count++;
+  int has_files = 0, has_workspace = 0;
+  for (size_t i = 0; i < count; i++) {
+    if (strncmp(envp[i], "DSH_FILES_DIR=", 14) == 0) has_files = 1;
+    else if (strncmp(envp[i], "DSH_WORKSPACE=", 14) == 0) has_workspace = 1;
+  }
+  if (has_files && has_workspace) return envp;
+  char **out = (char **)malloc((count + 3) * sizeof(char *));
+  if (!out) return envp;
+  for (size_t i = 0; i < count; i++) out[i] = envp[i];
+  size_t k = count;
+  const char *workspace = getenv("DSH_WORKSPACE");
+  if (!has_files) {
+    out[k] = (char *)malloc(14 + strlen(files) + 1);
+    if (!out[k]) { free(out); return envp; }
+    sprintf(out[k], "DSH_FILES_DIR=%s", files);
+    k++;
+  }
+  if (!has_workspace && workspace && *workspace) {
+    out[k] = (char *)malloc(14 + strlen(workspace) + 1);
+    if (!out[k]) { free(out); return envp; }
+    sprintf(out[k], "DSH_WORKSPACE=%s", workspace);
+    k++;
+  }
+  out[k] = NULL;
+  return out;
+}
+
 /* Returns 1 when the caller should fall through to the original syscall,
  * 0 when the reroute already ran. Every reroute failure falls through: the
  * linker can reject binaries the kernel would still exec (no PT_INTERP,
@@ -95,8 +159,11 @@ static int exec_via_linker(const char *path, char *const argv[],
 static int maybe_reroute(const char *path, char *const argv[],
                          char *const envp[]) {
   if (!path || strcmp(path, LINKER) == 0) return 1;
-  if (!is_elf(path)) return 1;
-  exec_via_linker(path, argv ? argv : EMPTY_ARGV, envp);
+  const char *fixed = maybe_bash_rewrite(path);
+  const char *target = fixed ? fixed : path;
+  if (!is_elf(target)) return 1;
+  char *const *env = env_with_bash_paths(target, envp);
+  exec_via_linker(target, argv ? argv : EMPTY_ARGV, env);
   return 1;
 }
 

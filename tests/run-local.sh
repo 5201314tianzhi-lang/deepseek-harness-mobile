@@ -24,6 +24,7 @@ if command -v gcc >/dev/null 2>&1; then
   # reroute actually fires and we can assert argv preservation.
   cat > fake-linker.c <<'EOF'
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 int main(int argc, char **argv) {
@@ -32,6 +33,24 @@ int main(int argc, char **argv) {
   if (argc >= 4 && strcmp(argv[2], "echo") == 0 && strcmp(argv[3], "hello") == 0) {
     printf("rerouted-ok\n");
     return 0;
+  }
+  /* bash-fix-test: rewritten PTY spawn — argv must survive and the DSH_*
+   * variables scrubbed by dsh must be re-injected into our environment. */
+  if (argc >= 6 && strcmp(argv[2], "/bin/bash") == 0 &&
+      strcmp(argv[3], "--noprofile") == 0 && strcmp(argv[5], "-i") == 0) {
+    if (getenv("DSH_FILES_DIR") && getenv("DSH_WORKSPACE")) {
+      printf("rewrite-ok\n");
+      return 0;
+    }
+    return 2;
+  }
+  /* bash-fix-test: one-shot wrapper exec — env must be re-injected. */
+  if (argc >= 4 && strcmp(argv[2], "bash") == 0 && strcmp(argv[3], "-c") == 0) {
+    if (getenv("DSH_FILES_DIR") && getenv("DSH_WORKSPACE")) {
+      printf("env-ok\n");
+      return 0;
+    }
+    return 3;
   }
   return 1;
 }
@@ -61,7 +80,16 @@ int main(void) {
 EOF
   gcc -O2 -o reroute-check reroute-check.c
   LD_PRELOAD="$PWD/exec-hook-reroute.so" ./reroute-check
-  rm -f fake-linker.c fake-linker reroute-check.c reroute-check exec-hook-reroute.so exec-hook.so exec-hook-test argv0safe
+  # bash rewrite + DSH_* env re-injection (the wrapper ELF stands in for
+  # usr/bin/bash at a fake DSH_FILES_DIR; DSH_* vars are in the runner env
+  # exactly as they are in the engine process).
+  gcc -O2 -Wall -Wextra -o bash-fix-test bash-fix-test.c -Wno-unused-parameter -Wno-nonnull
+  mkdir -p bashfixtest/usr/bin
+  cp fake-linker bashfixtest/usr/bin/bash
+  DSH_FILES_DIR="$PWD/bashfixtest" DSH_WORKSPACE="$PWD/bashfixtest/workspace" \
+    LD_PRELOAD="$PWD/exec-hook-reroute.so" ./bash-fix-test
+  rm -rf bashfixtest
+  rm -f fake-linker.c fake-linker reroute-check.c reroute-check exec-hook-reroute.so exec-hook.so exec-hook-test argv0safe bash-fix-test
   echo "== C: bash wrapper (proot routing ELF) =="
   # -Wno-format-truncation: fortify's theoretical analysis of the join
   # buffers (2x PATH_MAX vs app paths ~50 chars); truncation cannot happen
