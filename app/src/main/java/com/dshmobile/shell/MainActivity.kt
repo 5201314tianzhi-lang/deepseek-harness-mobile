@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
       engineManager.nodeBin,
       engineManager.execHookPath,
       engineManager.opensslConfEnv(),
+      File(engineManager.ensureDshDataHome(), DshPaths.PROJECTS_DIR),
     )
   }
 

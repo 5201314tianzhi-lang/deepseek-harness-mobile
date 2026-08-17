@@ -15,10 +15,12 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * Container provisioning: bash wrapper generation (proot routing, env
- * injection, /root/projects workspace) and the China mirror config files.
- * The proot binary is stubbed (ensureProot short-circuits on an existing
- * file) so the wrapper/mirror logic runs without assets.
+ * Container provisioning: bash wrapper (ELF, marker-based idempotence +
+ * W^X hardening) and the China mirror config files. The proot binary is
+ * stubbed (ensureProot short-circuits on an existing file); the wrapper ELF
+ * itself cannot be extracted in the Robolectric env (no APK lib/ entry), so
+ * the extraction path is covered by the C tests (tests/c/bash-wrapper-test.c)
+ * and the marker/up-to-date logic is covered here.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -51,7 +53,17 @@ class ProotRuntimeTest {
     }
   }
 
-  private fun wrapperText(): String = File(context.filesDir, DshPaths.USR_DIR + "/" + DshPaths.BASH_BIN).readText(Charsets.US_ASCII)
+  private fun wrapperFile(): File = File(context.filesDir, DshPaths.USR_DIR + "/" + DshPaths.BASH_BIN)
+
+  /** Seed a current wrapper: file + marker present, write bit stripped. */
+  private fun seedCurrentWrapper() {
+    File(context.filesDir, DshPaths.USR_DIR + "/bin").mkdirs()
+    wrapperFile().apply {
+      writeText("stub-wrapper")
+      setWritable(false, false) // W^X-stripped like a hardened wrapper
+    }
+    File(context.filesDir, DshPaths.USR_DIR + "/bin/.bash-wrapper").writeText("1")
+  }
 
   @Before
   fun setUp() {
@@ -60,9 +72,7 @@ class ProotRuntimeTest {
     // consulted and no real network is touched.
     fakeProotBin()
     fakeRootfs()
-    File(context.filesDir, DshPaths.USR_DIR + "/bin").mkdirs()
-    File(context.filesDir, "usr/bin/bash").writeText("original-bash")
-    File(context.filesDir, "usr/bin/sh").writeText("sh")
+    seedCurrentWrapper()
     runtime =
       ProotRuntime(
         context,
@@ -79,29 +89,10 @@ class ProotRuntimeTest {
   }
 
   @Test
-  fun `wrapper routes into proot with workspace and env`() {
+  fun `wrapper short-circuits when marker present`() {
     assertTrue(runtime.ensureWrapper())
-    val w = wrapperText()
-    // The original bash must be preserved as bash.termux.
-    assertTrue(File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").isFile)
-    // Core routing + env invariants.
-    assertTrue(w.contains("proot/proot"))
-    assertTrue(w.contains("-0"))
-    assertTrue(w.contains(File(context.filesDir, DshPaths.ROOTFS_DIR).absolutePath))
-    assertTrue(w.contains("/root/projects"))
-    assertTrue(w.contains("LD_LIBRARY_PATH=" + File(context.filesDir, "proot").absolutePath))
-    assertTrue(w.contains("PROOT_TMP_DIR=" + File(context.filesDir, "home/tmp").absolutePath))
-    assertTrue(w.contains("TMPDIR=/tmp"))
-    assertTrue(w.contains("resolv.conf"))
-    // The interpreter must be the system shell, not the snapshot's usr/bin/sh
-    // (an app-data ELF: devices with the exec ban refuse its kernel shebang
-    // exec — the LD_PRELOAD hook cannot intercept it).
-    assertTrue(w.startsWith("#!/system/bin/sh"))
-    val bash = File(context.filesDir, DshPaths.USR_DIR + "/" + DshPaths.BASH_BIN)
-    assertTrue(bash.canExecute())
-    // W^X: the wrapper itself must not stay writable (vendor W^X rejects
-    // exec of writable files, mirroring the snapshot write-bit strip).
-    assertFalse(bash.canWrite())
+    // The seeded wrapper is left untouched (no extraction, no rewrite).
+    assertEquals("stub-wrapper", wrapperFile().readText(Charsets.US_ASCII))
   }
 
   @Test
@@ -113,76 +104,32 @@ class ProotRuntimeTest {
   }
 
   @Test
-  fun `wrapper is idempotent and detects the projects marker`() {
+  fun `wrapper is idempotent`() {
     assertTrue(runtime.ensureWrapper())
-    val first = wrapperText()
+    val first = wrapperFile().readText(Charsets.US_ASCII)
     assertTrue(runtime.ensureWrapper())
-    assertEquals(first, wrapperText())
+    assertEquals(first, wrapperFile().readText(Charsets.US_ASCII))
   }
 
   @Test
-  fun `wrapper upgrade rewrites an old workspace-based wrapper`() {
-    File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").writeText("orig")
-    File(context.filesDir, DshPaths.USR_DIR + "/bin/bash").writeText(
-      "#!/x\nold wrapper with /root/workspace and PROOT_TMP_DIR=yes\n",
-    )
-    assertTrue(runtime.ensureWrapper())
-    assertTrue(wrapperText().contains("/root/projects"))
+  fun `wrapper needs re-extraction when the marker is missing`() {
+    // Marker gone (snapshot swap / first run of a new version): the wrapper
+    // must be re-extracted from the APK. The Robolectric env has no APK lib/
+    // entry, so extraction fails cleanly instead of short-circuiting.
+    File(context.filesDir, DshPaths.USR_DIR + "/bin/.bash-wrapper").delete()
+    assertFalse(runtime.ensureWrapper())
   }
 
   @Test
-  fun `wrapper upgrade rewrites the v0-1-1 app-data interpreter`() {
-    // The v0.1.x wrapper shebang pointed at the snapshot's usr/bin/sh — an
-    // app-data ELF whose kernel-level shebang exec the exec-hook cannot
-    // reroute, failing the container chain with EACCES on exec-ban devices.
-    // The old "/root/projects" marker alone must NOT short-circuit the
-    // rewrite (that marker is present in the broken wrapper too).
-    File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").writeText("orig")
-    val oldInterpreter = File(context.filesDir, DshPaths.USR_DIR + "/bin/sh").absolutePath
-    File(context.filesDir, DshPaths.USR_DIR + "/bin/bash").writeText(
-      "#!/$oldInterpreter\n" +
-        "if [ ! -x \"${File(context.filesDir, DshPaths.ROOTFS_DIR).absolutePath}/bin/bash\" ]; then\n" +
-        "  echo \"Ubuntu container not installed\" >&2\n  exit 127\nfi\n" +
-        "LD_LIBRARY_PATH=${File(context.filesDir, "proot").absolutePath}:\$LD_LIBRARY_PATH\n" +
-        "exec \"${File(context.filesDir, "proot").absolutePath}/proot\" -0 " +
-        "-r \"${File(context.filesDir, DshPaths.ROOTFS_DIR).absolutePath}\" " +
-        "-w /root/projects /bin/bash \"\$@\"\n",
-    )
+  fun `wrapper re-hardens a writable current wrapper`() {
+    // A current wrapper that regained the write bit (e.g. snapshot
+    // re-extraction restoring modes) must be re-hardened in place, not left
+    // writable — vendors refuse to exec writable files.
+    wrapperFile().setWritable(true, false)
+    assertTrue(wrapperFile().canWrite())
     assertTrue(runtime.ensureWrapper())
-    val w = wrapperText()
-    assertTrue(w.startsWith("#!/system/bin/sh"))
-    assertFalse(w.contains(oldInterpreter))
-    assertTrue(w.contains("/root/projects"))
-  }
-
-  @Test
-  fun `wrapper rewrite survives a read-only wrapper`() {
-    // W^X strips the write bit after generation; a later rewrite (upgrade)
-    // must restore write access before writing the new content.
-    assertTrue(runtime.ensureWrapper())
-    val bash = File(context.filesDir, DshPaths.USR_DIR + "/bin/bash")
-    bash.setWritable(true, false)
-    File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").writeText("orig")
-    bash.writeText("#!/x\nstale marker\n")
-    bash.setWritable(false, false) // simulate the W^X-stripped stale wrapper
-    assertTrue(runtime.ensureWrapper())
-    assertTrue(wrapperText().startsWith("#!/system/bin/sh"))
-    assertTrue(wrapperText().contains("/root/projects"))
-    assertFalse(bash.canWrite())
-  }
-
-  @Test
-  fun `wrapper rewrite restrips a writable current wrapper`() {
-    // A current (system-shebang) wrapper that regained the write bit (e.g.
-    // snapshot re-extraction restoring modes) must be re-hardened, not
-    // skipped by the marker check — vendors refuse to exec writable files.
-    assertTrue(runtime.ensureWrapper())
-    val bash = File(context.filesDir, DshPaths.USR_DIR + "/bin/bash")
-    bash.setWritable(true, false)
-    assertTrue(bash.canWrite())
-    assertTrue(runtime.ensureWrapper())
-    assertFalse(bash.canWrite())
-    assertTrue(wrapperText().startsWith("#!/system/bin/sh"))
+    assertFalse(wrapperFile().canWrite())
+    assertEquals("stub-wrapper", wrapperFile().readText(Charsets.US_ASCII))
   }
 
   @Test

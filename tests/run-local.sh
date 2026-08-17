@@ -62,6 +62,14 @@ EOF
   gcc -O2 -o reroute-check reroute-check.c
   LD_PRELOAD="$PWD/exec-hook-reroute.so" ./reroute-check
   rm -f fake-linker.c fake-linker reroute-check.c reroute-check exec-hook-reroute.so exec-hook.so exec-hook-test argv0safe
+  echo "== C: bash wrapper (proot routing ELF) =="
+  # -Wno-format-truncation: fortify's theoretical analysis of the join
+  # buffers (2x PATH_MAX vs app paths ~50 chars); truncation cannot happen
+  # and would fail loudly if it did.
+  gcc -O2 -Wall -Wextra -Wno-format-truncation -o bash-wrapper ../../app/src/main/cpp/bash-wrapper.c
+  gcc -O2 -Wall -Wextra -o bash-wrapper-test bash-wrapper-test.c
+  ./bash-wrapper-test
+  rm -rf files bash-wrapper bash-wrapper-test
 else
   echo "   (gcc not found; skipping C tests)"
 fi

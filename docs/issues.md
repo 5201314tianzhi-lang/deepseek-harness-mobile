@@ -2,7 +2,7 @@
 
 > 2026-08-15 审查产出。按依赖分组，P1 = 安全（优先处理），P2 = 正确性 bug，P3 = 健壮性。
 > 状态：🟥 待处理 / 🟨 处理中 / 🟩 已修复
-> 全部 24 项已修复（I-01..I-14 于 2026-08-15，I-15..I-24 于 2026-08-16 全面审查）；I-25 于 2026-08-17 修复。
+> 全部 24 项已修复（I-01..I-14 于 2026-08-15，I-15..I-24 于 2026-08-16 全面审查）；I-25 于 2026-08-17 修复（v0.1.1..v0.1.3 的 shebang/W^X 方案在真机无效，根因修正为内核脚本 exec 禁令，v0.1.4 起改为 ELF wrapper）。
 > 修复经 CI 质量门验证（assembleDebug + lintDebug + ktlintCheck + 单元测试 + JS/C 本地测试）。
 
 ---
@@ -254,9 +254,22 @@ shebang 指向快照 `usr/bin/sh`（app-data ELF）：内核解析 shebang 直�
 解释器、绕过 libc → LD_PRELOAD exec-hook 无法重路由 → 禁令设备拒绝
 EACCES。叠加因素：wrapper 生成后保留写位（rwxr-xr-x），违反厂商 W^X。
 
-**修复**：解释器改系统 `#!/system/bin/sh`（恒可 exec，且其 exec proot 走
-libc、hook 重路由仍生效）；升级标记由 `/root/projects` 改为新 shebang
-（旧 v0.1.1 wrapper 含旧标记，必须触发重写）；生成后显式 chmod 555（读+
-执行全用户，写位全移除，v0.1.3 强化：当前格式 wrapper 若被快照重解压等
-操作写回写位，会被重新加固而非被标记短路）；重写前恢复写位；删除不再
-使用的 `DshPaths.SH_BIN`。
+**修复（v0.1.1..v0.1.3 均无效，根因修正）**：v0.1.1 起改系统 `#!/system/bin/sh`
++ chmod 555（含 v0.1.3 的写位回写再加固），真机 v0.1.2/v0.1.3 报错与诊断日志
+**逐字相同**——wrapper 文件本身已正确（系统解释器、无写位），仍 EACCES。
+
+**根因**：内核 **exec 脚本**（binfmt_script）路径本身在禁令设备上被拒——
+非 wrapper 内容问题。exec-hook 只能拦截 libc execve（重路由 ELF 到 linker64
+dlopen），内核处理 shebang 的内部 exec 无法拦截。设备证据：node（app-data
+ELF，走 hook→linker64 路径）能跑、脚本 exec 必死 → 权限面差异精确等于
+"execve 脚本 vs dlopen ELF"。挂载点/SELinux 上下文/非法字符均已排除
+（node 的 mmap 与 dlopen 在同类目录与上下文下成功）。
+
+**修复（v0.1.4）**：wrapper 从**脚本**改为 **NDK 编译的 ELF**
+（`lib/<abi>/bash-wrapper`，见 `app/src/main/cpp/bash-wrapper.c`）：exec 被
+hook 重路由到 `/system/bin/linker64`（与 node 完全相同的已证明可行路径），
+整条容器链不再出现内核脚本 exec。路径经环境变量注入（`DSH_FILES_DIR`、
+`DSH_WORKSPACE`——linker64 加载后 `/proc/self/exe` 指向 linker，无法自定位），
+缺失时明确报错（exit 126）。`usr/bin/bin/.bash-wrapper` 标记判定当前性
+（快照替换整个 usr/，标记不会残留），写位回写时原地再加固（555）。
+脚本时代重命名/解释器逻辑全部删除。

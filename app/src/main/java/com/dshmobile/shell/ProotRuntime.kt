@@ -16,19 +16,75 @@ class ProotRuntime(
   private val usrDir: File,
   private val workspaceDir: File,
 ) {
-  /**
-   * Interpreter of the generated bash wrapper. MUST be a system binary:
-   * the snapshot's usr/bin/sh is an app-data ELF whose kernel-level shebang
-   * exec bypasses libc (the LD_PRELOAD exec-hook cannot reroute it), and
-   * devices with the app-data exec ban refuse it with EACCES. The system
-   * shell is always exec-able, and its exec of proot goes through libc so
-   * the hook reroute still applies.
-   */
-  private val bashWrapperShebang = "#!/system/bin/sh"
-
   val prootDir: File get() = File(context.filesDir, "proot")
   val prootBin: File get() = File(prootDir, "proot")
   val rootfsDir: File get() = File(context.filesDir, DshPaths.ROOTFS_DIR)
+
+  /**
+   * Sidecar marker next to usr/bin/bash: present iff the current bash is the
+   * NDK-built ELF wrapper. The snapshot swap replaces the whole usr/ tree
+   * (marker included), so a stale marker cannot survive an update.
+   */
+  private val bashWrapperMarker = File(usrDir, "bin/.bash-wrapper")
+
+  /**
+   * Replace usr/bin/bash with the proot ELF wrapper (NDK-built, shipped at
+   * lib/<abi>/bash-wrapper). Idempotent.
+   *
+   * The historical wrapper was a shell script; on hardened devices (Android
+   * 15+ / vendor W^X / SELinux) the kernel refuses the exec of a script
+   * inside app data with EACCES, and the exec-hook cannot reroute it — it
+   * only intercepts libc execve, while script exec is kernel-handled
+   * (binfmt_script). An ELF wrapper is rerouted through /system/bin/linker64
+   * (the dlopen-style load that already runs the engine's node), so the
+   * chain never needs a kernel-level script exec.
+   */
+  fun ensureWrapper(): Boolean {
+    if (!ensureProot()) return false
+    workspaceDir.mkdirs() // host side of the /root/projects bind mount
+    resolvConf() // the ELF wrapper binds it at runtime; must exist beforehand
+    val bash = File(usrDir, DshPaths.BASH_BIN)
+    if (bash.isFile && bashWrapperMarker.isFile && bash.length() > 0L) {
+      // Current wrapper: re-harden in place when a snapshot re-extraction
+      // restored the write bit (vendors refuse to exec writable files).
+      if (bash.canWrite()) harden(bash)
+      return true
+    }
+    if (!extractWrapper(bash)) return false
+    bashWrapperMarker.writeText("1")
+    harden(bash)
+    AppLog.log("proot", "bash wrapper installed -> " + bash.absolutePath)
+    return true
+  }
+
+  /** Extract the NDK-built ELF wrapper from the APK (lib/<abi>/bash-wrapper)
+   *  into usr/bin/bash, replacing the snapshot's real bash or a stale script
+   *  wrapper. Writes through the W^X write-bit strip when present. */
+  private fun extractWrapper(target: File): Boolean =
+    try {
+      val abi = abiAsset() ?: return false
+      target.parentFile?.mkdirs()
+      target.setWritable(true, false) // overwrite a W^X-stripped previous file
+      java.util.zip.ZipFile(context.applicationInfo.sourceDir).use { zip ->
+        val entry = zip.getEntry("lib/$abi/bash-wrapper") ?: return false
+        zip.getInputStream(entry).use { input ->
+          target.outputStream().use { out -> input.copyTo(out) }
+        }
+      }
+      true
+    } catch (t: Throwable) {
+      AppLog.log("proot", "wrapper extract failed", t)
+      false
+    }
+
+  /** W^X hardening — explicit 555: read+exec for owner/group/others, write
+   *  bit removed for everyone. Vendor security policies (EMUI W^X) refuse
+   *  to exec a writable+executable file. */
+  private fun harden(file: File) {
+    file.setReadable(true, false)
+    file.setExecutable(true, false)
+    file.setWritable(false, false)
+  }
 
   fun rootfsReady(): Boolean = File(rootfsDir, DshPaths.ROOTFS_BASH).isFile
 
@@ -103,71 +159,6 @@ class ProotRuntime(
     val ok = ensureProot() && ensureWrapper()
     applyMirrors() // best-effort: never blocks the engine on mirror config
     return ok
-  }
-
-  /**
-   * Replace usr/bin/bash with a proot wrapper (original kept as bash.termux).
-   * Idempotent. The wrapper is generated at runtime with dynamic paths so the
-   * package id never appears in the repo. Scripts exec natively (exec-hook
-   * only reroutes ELF), so no native wrapper code is needed.
-   */
-  fun ensureWrapper(): Boolean {
-    if (!ensureProot()) return false
-    workspaceDir.mkdirs() // host side of the /root/projects bind mount
-    val bash = File(usrDir, DshPaths.BASH_BIN)
-    val termux = File(usrDir, DshPaths.BASH_BIN + ".termux")
-    // Wrapper considered current when it routes via proot AND uses the system
-    // shell as its interpreter AND is W^X-hardened (not writable). The
-    // v0.1.x wrapper shebang pointed at the snapshot's usr/bin/sh — an
-    // app-data ELF whose kernel-level shebang exec the exec-hook cannot
-    // reroute (LD_PRELOAD only sees libc execve), so on devices with the
-    // app-data exec ban (Android 15+, vendor W^X) the whole container chain
-    // died with EACCES. The system shell is always exec-able; its exec of
-    // proot goes through libc and the hook, so the reroute still applies.
-    // Older installs are rewritten in place; a current-format wrapper that
-    // regained the write bit (e.g. snapshot re-extraction restoring modes)
-    // is re-hardened, not skipped by the marker check.
-    val wrapperUpToDate =
-      bash.isFile && termux.isFile &&
-        bash.readText(Charsets.US_ASCII).contains(bashWrapperShebang) &&
-        !bash.canWrite()
-    if (wrapperUpToDate) return true
-    if (bash.isFile && !bash.readText(Charsets.US_ASCII).contains("#!")) {
-      if (!bash.renameTo(termux)) return false
-    }
-    // Host-side temp dir: writable app storage. PROOT_TMP_DIR is proot's own
-    // scratch space (glue rootfs, f2fs probe, mkdtemp); the container-internal
-    // TMPDIR points at /tmp, which lives in the (writable) rootfs.
-    val hostTmp = File(context.filesDir, "home/tmp").apply { mkdirs() }.absolutePath
-    val wrapper =
-      """
-      $bashWrapperShebang
-      if [ ! -x "${rootfsDir.absolutePath}/${DshPaths.ROOTFS_BASH}" ]; then
-        echo "Ubuntu container not installed" >&2
-        exit 127
-      fi
-      LD_LIBRARY_PATH=${prootDir.absolutePath}:${'$'}LD_LIBRARY_PATH
-      export LD_LIBRARY_PATH
-      PROOT_TMP_DIR=$hostTmp
-      export PROOT_TMP_DIR
-      TMPDIR=/tmp
-      export TMPDIR
-      exec "${prootBin.absolutePath}" -0 -r "${rootfsDir.absolutePath}" \
-        -b /proc -b /dev -b /sys \
-        -b "${resolvConf().absolutePath}:/etc/resolv.conf" \
-        -b "${workspaceDir.absolutePath}:/root/projects" \
-        -w /root/projects /bin/bash "${'$'}@"
-      """.trimIndent()
-    bash.setWritable(true, false) // a W^X-stripped wrapper from a prior run is read-only
-    bash.writeText(wrapper)
-    // W^X hardening — explicit 555: read+exec for owner/group/others, write
-    // bit removed for everyone. Vendor security policies (EMUI W^X) refuse
-    // to exec a writable+executable file, so the write bit must be gone.
-    bash.setReadable(true, false)
-    bash.setExecutable(true, false)
-    bash.setWritable(false, false)
-    AppLog.log("proot", "bash wrapper installed -> " + bash.absolutePath)
-    return true
   }
 
   /**

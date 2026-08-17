@@ -18,6 +18,7 @@ class ContainerProbe(
   private val nodeBin: File,
   private val execHookPath: String?,
   private val opensslConfEnv: Map<String, String>,
+  private val workspaceDir: File,
 ) {
   /** Returns null on success, or the combined output tail on failure. */
   fun smokeTest(): String? =
@@ -33,6 +34,10 @@ class ContainerProbe(
           "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
           "HOME" to homeDir.absolutePath,
           "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
+          // Same vars the engine gets: the bash wrapper ELF resolves all dsh
+          // paths from these.
+          "DSH_FILES_DIR" to usrDir.parentFile.absolutePath,
+          "DSH_WORKSPACE" to workspaceDir.absolutePath,
         ) + opensslConfEnv
       val pb =
         ProcessBuilder("/system/bin/linker64", nodeBin.absolutePath, "-e", script).also { b ->

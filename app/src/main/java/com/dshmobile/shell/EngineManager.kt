@@ -314,9 +314,11 @@ class EngineManager(
         " node.length=" + nodeBin.length() + " usr=" + usrDir.canRead() + "/" + usrDir.canExecute(),
     )
     // Proot container runtime: extract proot + deps and install the bash
-    // wrapper routing agent shell commands into the Ubuntu container.
-    // Idempotent — cheap when already in place.
-    ProotRuntime(context, usrDir, File(ensureDshDataHome(), "workspace").apply { mkdirs() })
+    // wrapper (an ELF, rerouted through linker64 by the exec-hook) routing
+    // agent shell commands into the Ubuntu container. Idempotent — cheap when
+    // already in place.
+    val wrapperWorkspace = File(ensureDshDataHome(), "workspace").apply { mkdirs() }
+    ProotRuntime(context, usrDir, wrapperWorkspace)
       .ensureWrapper()
     val now = System.currentTimeMillis()
     // Process-level CAS: only one concurrent caller actually starts the engine
@@ -392,6 +394,11 @@ class EngineManager(
           // os.tmpdir() falls back to the baked-in Termux tmp on Android
           // (unwritable from the app domain); keep spill inside filesDir.
           "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
+          // The bash wrapper ELF resolves every dsh path from these (it is
+          // loaded via linker64, so it cannot locate itself); the workspace
+          // is mounted at /root/projects inside the container.
+          "DSH_FILES_DIR" to context.filesDir.absolutePath,
+          "DSH_WORKSPACE" to wrapperWorkspace.absolutePath,
           "LD_PRELOAD" to preloadValue,
           "TERMUX__ROOTFS" to usrDir.parentFile.absolutePath,
           "TERMUX__PREFIX" to usrDir.absolutePath,

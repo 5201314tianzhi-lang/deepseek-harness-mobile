@@ -118,11 +118,14 @@ st_other 由 GLOBAL HIDDEN 补丁为 DEFAULT），随 APK 发布，探针找到�
 | 子进程 | LD_PRELOAD exec-hook 重路由 → linker64 | 全部 |
 | 文件级 | 解压时剥离可执行文件写位（rwx→r-x） | 华为类 W^X |
 
-**已知限制**：内核解析 shebang 后的解释器 exec 不经 libc，hook 无法拦截——
-Android 15/16 上 `.sh` 脚本类工具仍受限（引擎核心为 node ELF，不受影响）。
-bash wrapper 因此**必须**用系统解释器 `#!/system/bin/sh`（v0.1.x 曾指向
-快照 `usr/bin/sh`，app-data ELF 在 exec 禁令设备上被内核拒绝 → EACCES
-容器失败，v0.1.1 重发版起改为系统 shell 并剥离 wrapper 写位）。
+**已知限制（v0.1.4 起）**：内核解析 shebang 后的解释器 exec 不经 libc，hook
+无法拦截——而禁令设备上**脚本 exec 本身**（binfmt_script 路径）也被拒
+（v0.1.1..v0.1.3 的 `#!/system/bin/sh` + chmod 555 wrapper 在华为真机仍
+EACCES，报错与日志逐字不变）。因此 bash wrapper 从脚本改为 **NDK ELF**
+（`app/src/main/cpp/bash-wrapper.c`，lib/<abi>/bash-wrapper）：exec 被 hook
+重路由到 linker64 dlopen——与 node 完全相同的已证明可行路径，容器链不再
+出现内核脚本 exec。路径经 `DSH_FILES_DIR`/`DSH_WORKSPACE` 环境变量注入
+（linker64 加载后 `/proc/self/exe` 指向 linker，wrapper 无法自定位）。
 
 ### 4.1 启动流程（MainActivity.startEngineFlow）
 
