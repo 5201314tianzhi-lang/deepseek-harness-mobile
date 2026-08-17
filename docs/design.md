@@ -33,7 +33,7 @@ MainActivity（编排）
  └─ pushSystemDark() —— 系统深色 → __dshThemeBridge.setDark
 
 GuideWizard（纯 UI）—— 三步状态卡、动作行、顶部条（呼吸点）
-HarnessWebView —— WebView 配置、引擎源导航门、兼容层注入、loadFailed 标志
+HarnessWebView —— WebView 配置、引擎源导航门、兼容层注入、EnginePageState 失败跟踪
 PickerBridge —— SAF 目录/文件选择（主线程 launch、跨重建保留待决回调）
 AndroidBridge —— window.androidBridge JS 接口（协议 v1）
 
@@ -129,7 +129,9 @@ EACCES，报错与日志逐字不变）。因此 bash wrapper 从脚本改为 **
 
 ### 4.1 启动流程（MainActivity.startEngineFlow）
 
-1. 探测引擎；运行中 → `showWeb()`（仅当页面之前加载失败才 reload）。
+1. 探测引擎；运行中 → `showWeb()`（仅当页面之前加载失败才重载；失败跟踪经
+   `EnginePageState`——错误页的 `onPageFinished` 不清除失败标记，重载用显式
+   `loadUrl` 而非 `reload()`）。
 2. 第 1 步：未解压（`usr/bin/node` 不存在）→ 解压 + 进度反馈。
 3. 第 2 步（强制）：rootfs 缺失 → `RootfsDownloader.install()`（下载 + SHA256
    硬校验 + staging 原子切换）；`ProotRuntime.ensureInitialized()`（proot 三

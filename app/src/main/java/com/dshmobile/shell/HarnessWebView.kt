@@ -6,6 +6,7 @@ import android.os.Build
 import android.webkit.JsResult
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -33,10 +34,13 @@ class HarnessWebView(
 
   private val exportLaunching = AtomicBoolean(false)
 
-  /** Set when the engine-source page failed to load (error page shown before
-   *  the engine answered); cleared on a successful load. Drives the
-   *  reload-if-failed policy instead of reloading on every show. */
-  private val loadFailed = AtomicBoolean(false)
+  /** Tracks whether the engine-source page ended in a network error; drives
+   *  the reload-if-failed policy instead of reloading on every show. A plain
+   *  boolean cannot work here — onPageFinished fires (with the pending URL)
+   *  even for error pages, which used to clear the failed flag right after
+   *  it was set, so a page that failed before the engine came up was never
+   *  reloaded once the engine became reachable. */
+  private val pageState = EnginePageState(EngineSource::isEngineSource)
   private var polyfillsJs: String? = null
 
   val view: WebView = WebView(activity).apply { id = android.view.View.generateViewId() }
@@ -66,6 +70,7 @@ class HarnessWebView(
           favicon: android.graphics.Bitmap?,
         ) {
           super.onPageStarted(view, url, favicon)
+          url?.let { pageState.onLoadStarted(it) }
           injectCompatPolyfills(view)
         }
 
@@ -98,12 +103,19 @@ class HarnessWebView(
 
         override fun onReceivedError(
           view: WebView,
-          errorCode: Int,
-          description: String,
-          failingUrl: String,
+          request: WebResourceRequest,
+          error: WebResourceError,
         ) {
-          if (EngineSource.isEngineSource(failingUrl)) {
-            loadFailed.set(true)
+          val url = request.url.toString()
+          AppLog.log(
+            "web",
+            "load error url=" + url + " mainFrame=" + request.isForMainFrame +
+              " code=" + error.errorCode + " desc=" + error.description,
+          )
+          // Main-frame failures only: subresource errors must not mark the
+          // page as failed (the old deprecated callback was main-frame only).
+          if (request.isForMainFrame && EngineSource.isEngineSource(url)) {
+            pageState.onLoadError(url)
             onEngineError()
           }
         }
@@ -113,7 +125,9 @@ class HarnessWebView(
           url: String,
         ) {
           super.onPageFinished(view, url)
-          if (EngineSource.isEngineSource(url)) loadFailed.set(false)
+          // onPageFinished fires for error pages too; the state machine keeps
+          // the failed flag until a load actually succeeds.
+          pageState.onLoadFinished(url)
           pushSystemDark()
         }
       }
@@ -190,9 +204,11 @@ class HarnessWebView(
 
   /** Reload only when the engine-source page failed to load earlier (error
    *  page shown before the engine answered); healthy pages are never touched
-   *  so foreground returns and picker callbacks keep their page state. */
+   *  so foreground returns and picker callbacks keep their page state.
+   *  Re-navigate explicitly instead of view.reload(): reloading an error
+   *  page would re-load the error page itself on some WebViews. */
   fun reloadIfFailed() {
-    if (loadFailed.get()) view.reload()
+    if (pageState.isFailed) view.loadUrl(EngineProbe.ENGINE_URL)
   }
 
   /** Evaluate a bridge-delivery script on the main thread (post). */

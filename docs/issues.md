@@ -2,7 +2,7 @@
 
 > 2026-08-15 审查产出。按依赖分组，P1 = 安全（优先处理），P2 = 正确性 bug，P3 = 健壮性。
 > 状态：🟥 待处理 / 🟨 处理中 / 🟩 已修复
-> 全部 24 项已修复（I-01..I-14 于 2026-08-15，I-15..I-24 于 2026-08-16 全面审查）；I-25 于 2026-08-17 修复（v0.1.1..v0.1.3 的 shebang/W^X 方案在真机无效，根因修正为内核脚本 exec 禁令，v0.1.4 起改为 ELF wrapper）。
+> 全部 24 项已修复（I-01..I-14 于 2026-08-15，I-15..I-24 于 2026-08-16 全面审查）；I-25 于 2026-08-17 修复（v0.1.1..v0.1.3 的 shebang/W^X 方案在真机无效，根因修正为内核脚本 exec 禁令，v0.1.4 起改为 ELF wrapper）；I-26 于 2026-08-17 修复（v0.1.5，WebView 失败标记被错误清除）。
 > 修复经 CI 质量门验证（assembleDebug + lintDebug + ktlintCheck + 单元测试 + JS/C 本地测试）。
 
 ---
@@ -273,3 +273,23 @@ hook 重路由到 `/system/bin/linker64`（与 node 完全相同的已证明可�
 缺失时明确报错（exit 126）。`usr/bin/bin/.bash-wrapper` 标记判定当前性
 （快照替换整个 usr/，标记不会残留），写位回写时原地再加固（555）。
 脚本时代重命名/解释器逻辑全部删除。
+
+### I-26 WebView 失败标记被 onPageFinished 清除 → 引擎就绪后永不重载 🟩（v0.1.5）
+
+**位置**：`HarnessWebView` / `EnginePageState`（新增）
+
+**问题**：真机症状"引擎启动成功（探测 200、顶栏消失）但 WebView 永远
+`net::ERR_CONNECTION_REFUSED`、系统浏览器同地址正常"。根因在 reload
+策略：`onCreate` 时引擎未起 → `loadUrl` 失败 → 错误页 + `loadFailed=true`；
+但 **WebView 对错误页也触发 `onPageFinished`（url 仍是原始引擎 URL）**，
+原实现在这里把 `loadFailed` 误清为 `false` → 之后 `reloadIfFailed()` 全部
+空操作 → 错误页永久残留。划掉应用重开会杀掉引擎子进程（force-stop 杀
+整个 UID），重开后 `loadUrl` 再次合法失败，叠加同一 bug 继续卡死。
+
+**修复**：新增纯状态机 `EnginePageState`（`onLoadStarted`/`onLoadError`/
+`onLoadFinished`，错误页的 finished 不再清除失败标记，仅"开始且无错误地
+完成"的加载可清除）；`onReceivedError` 改用 API 23+ 签名并只把主框架
+失败记为页面失败（子资源失败不影响），失败细节（url/mainFrame/code/desc）
+记入诊断日志；`reloadIfFailed()` 从 `view.reload()` 改为显式
+`loadUrl(ENGINE_URL)`（部分 WebView 对错误页 reload 只会重载错误页自身）。
+配套 `EnginePageStateTest` 覆盖回归场景。
