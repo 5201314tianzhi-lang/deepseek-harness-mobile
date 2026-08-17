@@ -163,7 +163,7 @@ class ProotRuntimeTest {
     val bash = File(context.filesDir, DshPaths.USR_DIR + "/bin/bash")
     bash.setWritable(true, false)
     File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").writeText("orig")
-    bash.writeText("#!/system/bin/sh\nstale marker\n")
+    bash.writeText("#!/x\nstale marker\n")
     bash.setWritable(false, false) // simulate the W^X-stripped stale wrapper
     assertTrue(runtime.ensureWrapper())
     assertTrue(wrapperText().startsWith("#!/system/bin/sh"))
