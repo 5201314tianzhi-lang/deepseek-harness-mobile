@@ -93,4 +93,24 @@
   <string name="shizuku_boost">Shizuku boost: </string>
   <string name="shizuku_permission_denied">Shizuku permission denied — grant it in the Shizuku app and retry.</string>
   <string name="shizuku_service_disconnected">Shizuku user service disconnected.</string>
+
+  <!-- Top bar (floating pill) -->
+  <string name="bar_failed">Connection failed · tap for details</string>
+  <string name="bar_success">Engine ready</string>
+
+  <!-- Guide actions -->
+  <string name="button_reload">Reload</string>
+  <string name="button_view_log">View log</string>
+
+  <!-- Step cards -->
+  <string name="step_status_done">Done</string>
+  <string name="step_status_active">In progress…</string>
+  <string name="step_status_pending">Pending</string>
+
+  <!-- Log viewer panel -->
+  <string name="log_panel_title">Diagnostic log</string>
+  <string name="button_copy_panel">Copy</string>
+  <string name="button_share">Share</string>
+  <string name="button_close">Close</string>
+  <string name="log_share_title">Share diagnostic log</string>
 </resources>

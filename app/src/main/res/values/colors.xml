@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <color name="ic_launcher_background">#ffffff</color>
-  <color name="bg_guide">#FFFFFF</color>
+  <color name="bg_guide">#FAFAFC</color>
   <color name="surface_card">#FFFFFF</color>
-  <color name="surface_inset">#F4F6F9</color>
-  <color name="line_border">#E4E8EF</color>
-  <color name="text_primary">#16191F</color>
-  <color name="text_secondary">#6B7380</color>
+  <color name="surface_inset">#F2F4F8</color>
+  <color name="line_border">#E7EAF0</color>
+  <color name="text_primary">#171A21</color>
+  <color name="text_secondary">#6E7684</color>
   <color name="accent">#4D6BFE</color>
+  <color name="accent_end">#8B5CF6</color>
   <color name="accent_dim">#E8EDFF</color>
   <color name="success">#17A26A</color>
   <color name="error">#D64545</color>
