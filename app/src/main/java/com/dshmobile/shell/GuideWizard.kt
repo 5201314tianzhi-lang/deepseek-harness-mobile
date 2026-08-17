@@ -33,7 +33,8 @@ class GuideWizard(
   private var engineStatus: TextView? = null
   private var statusDetail: TextView? = null
   private var progressBar: android.widget.ProgressBar? = null
-  private var primaryButton: Button? = null
+  private var primaryButton: LinearLayout? = null
+  private var primaryLabel: TextView? = null
   private var backButton: Button? = null
   private var errorBlock: LinearLayout? = null
   private var errorText: TextView? = null
@@ -41,11 +42,17 @@ class GuideWizard(
   private var actionRow: LinearLayout? = null
   private var keepAliveBlock: LinearLayout? = null
   private var keepAliveText: TextView? = null
-  private var spacer: View? = null
   private var keepAliveBattery: Button? = null
   private var keepAliveShizuku: Button? = null
-  private var stepDots: Array<TextView> = emptyArray()
-  private var stepLabels: Array<TextView> = emptyArray()
+  private var guideContent: LinearLayout? = null
+  private var stepCircles: Array<TextView> = emptyArray()
+  private var stepGlyphs: Array<TextView> = emptyArray()
+  private var stepStatusTexts: Array<TextView> = emptyArray()
+  private var stepCards: Array<LinearLayout> = emptyArray()
+  private var stepActiveGlyph: View? = null
+  private var stepPulseAnimator: android.animation.ValueAnimator? = null
+  private var firstStepRender = true
+  private var prevDone = 0
   private var topPulseDot: View? = null
   private var topPulseAnimator: android.animation.ValueAnimator? = null
 
@@ -112,17 +119,36 @@ class GuideWizard(
       .start()
     webView.visibility = View.GONE
     stopTopBarPulse()
+    stopStepPulse()
     topStatusBar.visibility = View.GONE
     guideView.visibility = View.VISIBLE
-    guideView
-      .animate()
-      .alpha(1f)
-      .setDuration(200)
-      .start()
+    guideView.alpha = 1f
+    animateGuideEntry()
+  }
+
+  /** Staggered entry: children fade in + rise 12dp, 80ms apart. */
+  private fun animateGuideEntry() {
+    val content = guideContent ?: return
+    var delay = 0L
+    for (i in 0 until content.childCount) {
+      val child = content.getChildAt(i)
+      child.alpha = 0f
+      child.translationY = (12 * d)
+      child
+        .animate()
+        .alpha(1f)
+        .translationY(0f)
+        .setStartDelay(delay)
+        .setDuration(400)
+        .setInterpolator(INTERPOLATOR)
+        .start()
+      delay += 80
+    }
   }
 
   fun showWeb() {
     backButton?.visibility = View.GONE
+    stopStepPulse()
     guideView
       .animate()
       .alpha(0f)
@@ -315,205 +341,126 @@ class GuideWizard(
       attachPressFeedback(this)
     }
 
-  private fun buildGuideView(): LinearLayout {
+  private fun buildGuideView(): ScrollView {
     val pad = (24 * d).toInt()
-    val guide =
+    val palette = GuidePalette(activity)
+    val content =
       LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(pad, pad, pad, pad)
-        gravity = android.view.Gravity.CENTER_HORIZONTAL
-        visibility = View.GONE
-        setBackgroundColor(activity.resources.getColor(com.dshmobile.shell.R.color.bg_guide, null))
+        setPadding(pad, 0, pad, pad)
       }
+    guideContent = content
 
-    // Brand block.
+    // Page glow: radial brand-gradient wash behind the brand block (~14%
+    // opacity), the third and last allowed gradient after logo and primary.
+    val glow =
+      View(activity).apply {
+        background = glowDrawable(palette)
+        layoutParams =
+          LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            (220 * d).toInt(),
+          )
+      }
+    content.addView(glow)
+    content.addView(buildBrandBlock())
+    content.addView(buildStepCards())
+    content.addView(buildStatusCard())
+    // Keep-alive panel stays hidden until requested.
+    keepAliveBlock = buildKeepAliveCard().also { it.visibility = View.GONE }
+    content.addView(keepAliveBlock)
+    content.addView(buildActionArea())
+    content.addView(buildVersionLine())
+
+    return ScrollView(activity).apply {
+      isFillViewport = true
+      visibility = View.GONE
+      setBackgroundColor(palette.background)
+      addView(content)
+    }
+  }
+
+  /** Radial glow behind the brand block: the accent at ~14% alpha. */
+  private fun glowDrawable(palette: GuidePalette): android.graphics.drawable.GradientDrawable {
+    val center = palette.accent and 0x00FFFFFF.toInt() or (0x24 shl 24)
+    return android.graphics.drawable.GradientDrawable().apply {
+      shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+      gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
+      colors = intArrayOf(center, palette.background)
+      gradientRadius = (400 * d)
+    }
+  }
+
+  /** Brand block: programmatic gradient logo + app name + subtitle. */
+  private fun buildBrandBlock(): LinearLayout {
+    val palette = GuidePalette(activity)
     val logo =
-      android.widget.ImageView(activity).apply {
-        setImageResource(com.dshmobile.shell.R.mipmap.ic_launcher)
-        val size = (56 * d).toInt()
+      TextView(activity).apply {
+        text = "D"
+        textSize = 22f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        gravity = android.view.Gravity.CENTER
+        setTextColor(0xFFFFFFFF.toInt())
+        background =
+          android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            colors = intArrayOf(palette.accent, palette.accentEnd)
+            gradientType = android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT
+            gradientAngle = 135
+          }
+        val size = (52 * d).toInt()
         layoutParams = LinearLayout.LayoutParams(size, size)
       }
     val brandTitle =
       TextView(activity).apply {
         text = activity.getString(R.string.app_name)
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
-        textSize = 26f
+        setTextColor(palette.textPrimary)
+        textSize = 22f
         typeface = android.graphics.Typeface.DEFAULT_BOLD
         setPadding(0, (16 * d).toInt(), 0, 0)
       }
     val brandSub =
       TextView(activity).apply {
         text = activity.getString(R.string.guide_brand_subtitle)
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
+        setTextColor(palette.textSecondary)
         textSize = 13f
         setPadding(0, (4 * d).toInt(), 0, 0)
       }
-    val brand =
-      LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = android.view.Gravity.CENTER_HORIZONTAL
-        setPadding(0, (72 * d).toInt(), 0, 0)
-      }
-    brand.addView(logo)
-    brand.addView(brandTitle)
-    brand.addView(brandSub)
-
-    // Status card.
-    val statusDot =
-      View(activity).apply {
-        background = activity.getDrawable(com.dshmobile.shell.R.drawable.status_dot)
-        val size = (8 * d).toInt()
-        layoutParams = LinearLayout.LayoutParams(size, size)
-      }
-    val statusTitle =
-      TextView(activity).apply {
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
-        textSize = 15f
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-        setPadding((8 * d).toInt(), 0, 0, 0)
-      }
-    engineStatus = statusTitle
-    val statusRow =
-      LinearLayout(activity).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = android.view.Gravity.CENTER_VERTICAL
-      }
-    statusRow.addView(statusDot)
-    statusRow.addView(statusTitle)
-    val detail =
-      TextView(activity).apply {
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
-        textSize = 12f
-        typeface = android.graphics.Typeface.MONOSPACE
-        setPadding(0, (10 * d).toInt(), 0, 0)
-        maxLines = 3
-        ellipsize = android.text.TextUtils.TruncateAt.END
-      }
-    statusDetail = detail
-    val progress =
-      android.widget.ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
-        isIndeterminate = true
-        progressTintList =
-          android.content.res.ColorStateList
-            .valueOf(0xFF4D6BFE.toInt())
-        progressBackgroundTintList =
-          android.content.res.ColorStateList
-            .valueOf(0xFFE8EDFF.toInt())
-        visibility = View.GONE
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (4 * d).toInt())
-        lp.topMargin = (16 * d).toInt()
-        layoutParams = lp
-      }
-    progressBar = progress
-    val cardBody =
-      LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
-      }
-    cardBody.addView(statusRow)
-    cardBody.addView(detail)
-    cardBody.addView(progress)
-    val errorDetail =
-      TextView(activity).apply {
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.error, null))
-        textSize = 12f
-        typeface = android.graphics.Typeface.MONOSPACE
-        setPadding((12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt())
-        maxLines = 4
-        ellipsize = android.text.TextUtils.TruncateAt.END
-      }
-    errorText = errorDetail
-    val errorBlock =
-      LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        background = activity.getDrawable(com.dshmobile.shell.R.drawable.inset_bg)
-        visibility = View.GONE
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.topMargin = (16 * d).toInt()
-        layoutParams = lp
-      }
-    errorBlock.addView(errorDetail)
-    this.errorBlock = errorBlock
-    val card =
-      LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        background = activity.getDrawable(com.dshmobile.shell.R.drawable.card_bg)
-        layoutParams =
-          LinearLayout
-            .LayoutParams(
-              ViewGroup.LayoutParams.MATCH_PARENT,
-              ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply {
-              topMargin = (40 * d).toInt()
-              leftMargin = (8 * d).toInt()
-              rightMargin = (8 * d).toInt()
-            }
-      }
-    card.addView(cardBody)
-    card.addView(errorBlock)
-    statusCard = card
-
-    // First-run consent card is removed (no consent gate); keep-alive panel
-    // remains hidden until requested.
-    keepAliveBlock = buildKeepAliveCard().also { it.visibility = View.GONE }
-
-    // Actions: one primary (launch / retry) + secondary utilities.
-    val primary =
-      accentButton(activity.getString(R.string.button_launch_engine)).apply {
-        visibility = View.GONE
-        setOnClickListener { onPrimaryAction() }
-      }
-    primaryButton = primary
-    val update =
-      ghostButton(activity.getString(R.string.button_check_update)).apply {
-        setOnClickListener { onCheckUpdate { status -> showGuideStatus(status, null, true) } }
-      }
-    val copyLog =
-      ghostButton(activity.getString(R.string.button_copy_log)).apply {
-        setOnClickListener { onCopyLog() }
-      }
-    val keepAlive =
-      ghostButton(activity.getString(R.string.button_keep_alive)).apply {
-        setOnClickListener { onKeepAlive() }
-      }
-    val back =
-      ghostButton(activity.getString(R.string.button_back_to_harness)).apply {
-        visibility = View.GONE
-        setOnClickListener { onBackToHarness() }
-      }
-    backButton = back
-    val actions =
-      LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        layoutParams =
-          LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = (32 * d).toInt()
-            leftMargin = (8 * d).toInt()
-            rightMargin = (8 * d).toInt()
-          }
-      }
-    actionRow = actions
-    actions.addView(primary)
-    actions.addView(update)
-    actions.addView(copyLog)
-    actions.addView(keepAlive)
-    actions.addView(back)
-    repeat(actions.childCount - 1) { i ->
-      (actions.getChildAt(i).layoutParams as LinearLayout.LayoutParams).bottomMargin = (10 * d).toInt()
+    return LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = android.view.Gravity.CENTER_HORIZONTAL
+      setPadding(0, (16 * d).toInt(), 0, 0)
+      addView(logo)
+      addView(brandTitle)
+      addView(brandSub)
     }
+  }
 
-    val spacer =
-      View(activity).apply {
-        layoutParams = LinearLayout.LayoutParams(0, 0).apply { weight = 1f }
+  /** Bottom version row: app version · ABI · snapshot dsh version. */
+  private fun buildVersionLine(): TextView {
+    val palette = GuidePalette(activity)
+    val appVersion =
+      try {
+        activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: "?"
+      } catch (_: Throwable) {
+        "?"
       }
-    this.spacer = spacer
-    guide.addView(brand)
-    guide.addView(buildStepIndicator())
-    guide.addView(spacer)
-    guide.addView(card)
-    guide.addView(keepAliveBlock)
-    guide.addView(actions)
-    return guide
+    val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "?"
+    val line = VersionLine.format(appVersion, abi, SnapshotVersion.read(activity))
+    return TextView(activity).apply {
+      text = line
+      setTextColor(palette.textSecondary)
+      textSize = 12f
+      typeface = android.graphics.Typeface.MONOSPACE
+      gravity = android.view.Gravity.CENTER_HORIZONTAL
+      layoutParams =
+        LinearLayout.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT,
+          ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+          topMargin = (24 * d).toInt()
+        }
+    }
   }
 
   private fun buildKeepAliveCard(): LinearLayout {
@@ -607,7 +554,6 @@ class GuideWizard(
     keepAliveText?.text = statusText
     keepAliveBattery?.setOnClickListener { onBattery() }
     keepAliveShizuku?.setOnClickListener { onShizuku() }
-    spacer?.visibility = View.GONE
     keepAliveBlock?.visibility = View.VISIBLE
     statusCard?.visibility = View.GONE
     actionRow?.visibility = View.GONE
@@ -618,7 +564,6 @@ class GuideWizard(
   }
 
   fun hideKeepAlivePanel() {
-    spacer?.visibility = View.VISIBLE
     keepAliveBlock?.visibility = View.GONE
     statusCard?.visibility = View.VISIBLE
     actionRow?.visibility = View.VISIBLE
