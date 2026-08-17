@@ -26,6 +26,8 @@ class GuideWizard(
   private val onCopyLog: () -> Unit,
   private val onBackToHarness: () -> Unit,
   private val onKeepAlive: () -> Unit,
+  private val onOpenLog: () -> Unit,
+  private val onReload: () -> Unit,
 ) {
   val guideView: LinearLayout = buildGuideView()
   val topStatusBar: LinearLayout = buildTopStatusBar()
@@ -89,20 +91,14 @@ class GuideWizard(
       false,
     )
     renderSteps(3, 3)
-    primaryButton?.apply {
-      visibility = View.VISIBLE
-      text = activity.getString(R.string.button_launch_engine)
-      isEnabled = true
-    }
+    primaryLabel?.text = activity.getString(R.string.button_launch_engine)
+    primaryButton?.visibility = View.VISIBLE
   }
 
   fun showGuideError(title: String) {
     showGuideStatus(title, null, false)
-    primaryButton?.apply {
-      visibility = View.VISIBLE
-      text = activity.getString(R.string.button_retry)
-      isEnabled = true
-    }
+    primaryLabel?.text = activity.getString(R.string.button_retry)
+    primaryButton?.visibility = View.VISIBLE
     // Surface the tail of the diagnostic log as inline error context.
     val tail = AppLog.tail(1200)
     errorText?.text = tail
@@ -357,8 +353,8 @@ class GuideWizard(
         android.view.MotionEvent.ACTION_DOWN -> {
           v
             .animate()
-            .scaleX(0.97f)
-            .scaleY(0.97f)
+            .scaleX(0.98f)
+            .scaleY(0.98f)
             .setDuration(80)
             .start()
         }
@@ -453,6 +449,132 @@ class GuideWizard(
     }
   }
 
+  /** Engine status card: status row + detail + progress + engine URL with a
+   *  "View log" entry + inline error block (log tail). */
+  private fun buildStatusCard(): LinearLayout {
+    val palette = GuidePalette(activity)
+    val statusDot =
+      View(activity).apply {
+        background = activity.getDrawable(com.dshmobile.shell.R.drawable.status_dot)
+        val size = (8 * d).toInt()
+        layoutParams = LinearLayout.LayoutParams(size, size)
+      }
+    val statusTitle =
+      TextView(activity).apply {
+        setTextColor(palette.textPrimary)
+        textSize = 15f
+        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        setPadding((8 * d).toInt(), 0, 0, 0)
+      }
+    engineStatus = statusTitle
+    val statusRow =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = android.view.Gravity.CENTER_VERTICAL
+      }
+    statusRow.addView(statusDot)
+    statusRow.addView(statusTitle)
+    val detail =
+      TextView(activity).apply {
+        setTextColor(palette.textSecondary)
+        textSize = 12f
+        typeface = android.graphics.Typeface.MONOSPACE
+        setPadding(0, (10 * d).toInt(), 0, 0)
+        maxLines = 3
+        ellipsize = android.text.TextUtils.TruncateAt.END
+      }
+    statusDetail = detail
+    val progress =
+      android.widget.ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
+        isIndeterminate = true
+        progressTintList = android.content.res.ColorStateList.valueOf(palette.accent)
+        progressBackgroundTintList = android.content.res.ColorStateList.valueOf(palette.accentDim)
+        visibility = View.GONE
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (4 * d).toInt())
+        lp.topMargin = (16 * d).toInt()
+        layoutParams = lp
+      }
+    progressBar = progress
+    val urlText =
+      TextView(activity).apply {
+        text = EngineProbe.ENGINE_URL
+        setTextColor(palette.textSecondary)
+        textSize = 12f
+        typeface = android.graphics.Typeface.MONOSPACE
+        setPadding(0, (10 * d).toInt(), 0, 0)
+      }
+    val viewLog =
+      ghostButton(activity.getString(R.string.button_view_log)).apply {
+        minHeight = (36 * d).toInt()
+        setOnClickListener { onOpenLog() }
+      }
+    val urlRow =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = android.view.Gravity.CENTER_VERTICAL
+      }
+    urlRow.addView(urlText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT).apply { weight = 1f })
+    urlRow.addView(viewLog)
+    val cardBody =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
+      }
+    cardBody.addView(statusRow)
+    cardBody.addView(detail)
+    cardBody.addView(progress)
+    cardBody.addView(urlRow)
+    val errorDetail =
+      TextView(activity).apply {
+        setTextColor(palette.error)
+        textSize = 12f
+        typeface = android.graphics.Typeface.MONOSPACE
+        setPadding((12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt())
+        maxLines = 4
+        ellipsize = android.text.TextUtils.TruncateAt.END
+      }
+    errorText = errorDetail
+    val errorBlock =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        background =
+          android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = (12 * d)
+            setColor(palette.errorDim)
+          }
+        visibility = View.GONE
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.topMargin = (16 * d).toInt()
+        layoutParams = lp
+      }
+    errorBlock.addView(errorDetail)
+    this.errorBlock = errorBlock
+    val inner =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        background = activity.getDrawable(com.dshmobile.shell.R.drawable.inset_bg)
+      }
+    inner.addView(cardBody)
+    inner.addView(errorBlock)
+    val card =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        background = activity.getDrawable(com.dshmobile.shell.R.drawable.card_bg)
+        setPadding((4 * d).toInt(), (4 * d).toInt(), (4 * d).toInt(), (4 * d).toInt())
+        layoutParams =
+          LinearLayout
+            .LayoutParams(
+              ViewGroup.LayoutParams.MATCH_PARENT,
+              ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+              topMargin = (20 * d).toInt()
+            }
+      }
+    card.addView(inner)
+    statusCard = card
+    return card
+  }
+
   /** Brand block: programmatic gradient logo + app name + subtitle. */
   private fun buildBrandBlock(): LinearLayout {
     val palette = GuidePalette(activity)
@@ -498,9 +620,144 @@ class GuideWizard(
     }
   }
 
-  /** Bottom version row: app version · ABI · snapshot dsh version. */
-  private fun buildVersionLine(): TextView {
+  /** Action area: gradient primary pill + 2×2 ghost grid (update / reload /
+   *  keep-alive / copy log) + back-to-harness (visible only when the guide
+   *  was opened from the cold-start bar). */
+  private fun buildActionArea(): LinearLayout {
+    val sep = (10 * d).toInt()
+    val primary =
+      primaryPill(activity.getString(R.string.button_launch_engine)).apply {
+        visibility = View.GONE
+        setOnClickListener { onPrimaryAction() }
+      }
+    primaryButton = primary
+    fun ghost(text: String, action: () -> Unit): Button =
+      ghostButton(text).apply {
+        setOnClickListener { action() }
+      }
+    val update =
+      ghost(activity.getString(R.string.button_check_update)) {
+        onCheckUpdate { status -> showGuideStatus(status, null, true) }
+      }
+    val reload = ghost(activity.getString(R.string.button_reload)) { onReload() }
+    val keepAlive = ghost(activity.getString(R.string.button_keep_alive)) { onKeepAlive() }
+    val copyLog = ghost(activity.getString(R.string.button_copy_log)) { onCopyLog() }
+    val back =
+      ghost(activity.getString(R.string.button_back_to_harness)).apply {
+        visibility = View.GONE
+        setOnClickListener { onBackToHarness() }
+      }
+    backButton = back
+    (update.layoutParams as LinearLayout.LayoutParams).bottomMargin = sep
+    (reload.layoutParams as LinearLayout.LayoutParams).bottomMargin = sep
+    (keepAlive.layoutParams as LinearLayout.LayoutParams).bottomMargin = sep
+    val left =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams =
+          LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            weight = 1f
+            rightMargin = (8 * d).toInt()
+          }
+      }
+    val right =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams =
+          LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            weight = 1f
+            leftMargin = (8 * d).toInt()
+          }
+      }
+    left.addView(update)
+    left.addView(keepAlive)
+    right.addView(reload)
+    right.addView(copyLog)
+    val grid =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams =
+          LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = (24 * d).toInt()
+          }
+      }
+    grid.addView(left)
+    grid.addView(right)
+    back.layoutParams =
+      LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        topMargin = (16 * d).toInt()
+      }
+    val actions =
+      LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams =
+          LinearLayout
+            .LayoutParams(
+              ViewGroup.LayoutParams.MATCH_PARENT,
+              ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+              topMargin = (32 * d).toInt()
+            }
+      }
+    actions.addView(primary)
+    actions.addView(grid)
+    actions.addView(back)
+    actionRow = actions
+    return actions
+  }
+
+  /** Gradient pill primary: label + trailing circular chevron. */
+  private fun primaryPill(text: String): LinearLayout {
     val palette = GuidePalette(activity)
+    val label =
+      TextView(activity).apply {
+        textSize = 15f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        setTextColor(0xFFFFFFFF.toInt())
+      }
+    primaryLabel = label
+    val chevron =
+      TextView(activity).apply {
+        text = "›"
+        textSize = 14f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        setTextColor(0xFFFFFFFF.toInt())
+        gravity = android.view.Gravity.CENTER
+        background =
+          android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            setColor(0x33FFFFFF.toInt())
+          }
+        val size = (24 * d).toInt()
+        layoutParams = LinearLayout.LayoutParams(size, size)
+      }
+    return LinearLayout(activity).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = android.view.Gravity.CENTER
+      background =
+        android.graphics.drawable.GradientDrawable().apply {
+          shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+          cornerRadius = (24 * d)
+          colors = intArrayOf(palette.accent, palette.accentEnd)
+          gradientType = android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT
+          gradientAngle = 0
+        }
+      minHeight = (48 * d).toInt()
+      setPadding((20 * d).toInt(), 0, (12 * d).toInt(), 0)
+      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+      addView(label)
+      addView(
+        chevron,
+        LinearLayout.LayoutParams((24 * d).toInt(), (24 * d).toInt()).apply {
+          leftMargin = (14 * d).toInt()
+        },
+      )
+      setOnClickListener { onPrimaryAction() }
+      attachPressFeedback(this)
+    }
+  }
+
+  private fun buildVersionLineText(): String {
     val appVersion =
       try {
         activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: "?"
@@ -508,9 +765,14 @@ class GuideWizard(
         "?"
       }
     val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "?"
-    val line = VersionLine.format(appVersion, abi, SnapshotVersion.read(activity))
+    return VersionLine.format(appVersion, abi, SnapshotVersion.read(activity))
+  }
+
+  /** Bottom version row: app version · ABI · snapshot dsh version. */
+  private fun buildVersionLine(): TextView {
+    val palette = GuidePalette(activity)
     return TextView(activity).apply {
-      text = line
+      text = buildVersionLineText()
       setTextColor(palette.textSecondary)
       textSize = 12f
       typeface = android.graphics.Typeface.MONOSPACE
