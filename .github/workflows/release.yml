@@ -274,7 +274,7 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
-          update_release: true
+          overwrite_files: true
           body: |
             DeepSeek Harness Android shell APK ${{ steps.tag.outputs.tag }}
             - arm64-v8a: for ARM64 phones/tablets
