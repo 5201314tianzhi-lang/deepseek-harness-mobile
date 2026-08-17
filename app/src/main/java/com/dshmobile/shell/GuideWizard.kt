@@ -788,16 +788,17 @@ class GuideWizard(
   }
 
   private fun buildKeepAliveCard(): LinearLayout {
+    val palette = GuidePalette(activity)
     val title =
       TextView(activity).apply {
-        setText(activity.getString(R.string.keep_alive_title))
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_primary, null))
-        textSize = 17f
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        text = activity.getString(R.string.keep_alive_title)
+        setTextColor(palette.textPrimary)
+        textSize = 15f
+        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
       }
     val text =
       TextView(activity).apply {
-        setTextColor(activity.resources.getColor(com.dshmobile.shell.R.color.text_secondary, null))
+        setTextColor(palette.textSecondary)
         textSize = 13f
         setPadding(0, (12 * d).toInt(), 0, 0)
       }
@@ -813,6 +814,7 @@ class GuideWizard(
     val sep = (10 * d).toInt()
     battery.layoutParams =
       LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        topMargin = (16 * d).toInt()
         bottomMargin = sep
       }
     shizuku.layoutParams =
@@ -820,51 +822,35 @@ class GuideWizard(
         bottomMargin = sep
       }
     close.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-    val buttons =
+    val body =
       LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding((20 * d).toInt(), (8 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
+        setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt())
+        addView(title)
+        addView(text)
         addView(battery)
         addView(shizuku)
         addView(close)
       }
-    val body =
+    val inner =
       LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), 0)
-        addView(title)
-        addView(text)
+        background = activity.getDrawable(com.dshmobile.shell.R.drawable.inset_bg)
+        addView(body)
       }
     return LinearLayout(activity).apply {
       orientation = LinearLayout.VERTICAL
       background = activity.getDrawable(com.dshmobile.shell.R.drawable.card_bg)
+      setPadding((4 * d).toInt(), (4 * d).toInt(), (4 * d).toInt(), (4 * d).toInt())
       layoutParams =
         LinearLayout
           .LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
           ).apply {
-            weight = 1f
-            topMargin = (40 * d).toInt()
-            leftMargin = (8 * d).toInt()
-            rightMargin = (8 * d).toInt()
+            topMargin = (32 * d).toInt()
           }
-      // Status text scrolls; the action buttons stay pinned to the bottom.
-      val scroll =
-        ScrollView(activity).apply {
-          isFillViewport = true
-          layoutParams =
-            LinearLayout
-              .LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-              ).apply {
-                weight = 1f
-              }
-        }
-      scroll.addView(body)
-      addView(scroll)
-      addView(buttons)
+      addView(inner)
     }
   }
 
