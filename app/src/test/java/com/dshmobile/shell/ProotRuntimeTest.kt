@@ -93,8 +93,15 @@ class ProotRuntimeTest {
     assertTrue(w.contains("PROOT_TMP_DIR=" + File(context.filesDir, "home/tmp").absolutePath))
     assertTrue(w.contains("TMPDIR=/tmp"))
     assertTrue(w.contains("resolv.conf"))
-    assertTrue(w.startsWith("#!/"))
-    assertTrue(File(context.filesDir, DshPaths.USR_DIR + "/" + DshPaths.BASH_BIN).canExecute())
+    // The interpreter must be the system shell, not the snapshot's usr/bin/sh
+    // (an app-data ELF: devices with the exec ban refuse its kernel shebang
+    // exec — the LD_PRELOAD hook cannot intercept it).
+    assertTrue(w.startsWith("#!/system/bin/sh"))
+    val bash = File(context.filesDir, DshPaths.USR_DIR + "/" + DshPaths.BASH_BIN)
+    assertTrue(bash.canExecute())
+    // W^X: the wrapper itself must not stay writable (vendor W^X rejects
+    // exec of writable files, mirroring the snapshot write-bit strip).
+    assertFalse(bash.canWrite())
   }
 
   @Test
@@ -117,10 +124,51 @@ class ProotRuntimeTest {
   fun `wrapper upgrade rewrites an old workspace-based wrapper`() {
     File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").writeText("orig")
     File(context.filesDir, DshPaths.USR_DIR + "/bin/bash").writeText(
-      "#!/x\nold wrapper with /root/workspace and PROOT_TMP_DIR=yes\n",
+      "#!/system/bin/sh\nold wrapper with /root/workspace and PROOT_TMP_DIR=yes\n",
     )
     assertTrue(runtime.ensureWrapper())
     assertTrue(wrapperText().contains("/root/projects"))
+  }
+
+  @Test
+  fun `wrapper upgrade rewrites the v0-1-1 app-data interpreter`() {
+    // The v0.1.x wrapper shebang pointed at the snapshot's usr/bin/sh — an
+    // app-data ELF whose kernel-level shebang exec the exec-hook cannot
+    // reroute, failing the container chain with EACCES on exec-ban devices.
+    // The old "/root/projects" marker alone must NOT short-circuit the
+    // rewrite (that marker is present in the broken wrapper too).
+    File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").writeText("orig")
+    val oldInterpreter = File(context.filesDir, DshPaths.USR_DIR + "/bin/sh").absolutePath
+    File(context.filesDir, DshPaths.USR_DIR + "/bin/bash").writeText(
+      "#!/$oldInterpreter\n" +
+        "if [ ! -x \"${File(context.filesDir, DshPaths.ROOTFS_DIR).absolutePath}/bin/bash\" ]; then\n" +
+        "  echo \"Ubuntu container not installed\" >&2\n  exit 127\nfi\n" +
+        "LD_LIBRARY_PATH=${File(context.filesDir, "proot").absolutePath}:\$LD_LIBRARY_PATH\n" +
+        "exec \"${File(context.filesDir, "proot").absolutePath}/proot\" -0 " +
+        "-r \"${File(context.filesDir, DshPaths.ROOTFS_DIR).absolutePath}\" " +
+        "-w /root/projects /bin/bash \"\$@\"\n",
+    )
+    assertTrue(runtime.ensureWrapper())
+    val w = wrapperText()
+    assertTrue(w.startsWith("#!/system/bin/sh"))
+    assertFalse(w.contains(oldInterpreter))
+    assertTrue(w.contains("/root/projects"))
+  }
+
+  @Test
+  fun `wrapper rewrite survives a read-only wrapper`() {
+    // W^X strips the write bit after generation; a later rewrite (upgrade)
+    // must restore write access before writing the new content.
+    assertTrue(runtime.ensureWrapper())
+    val bash = File(context.filesDir, DshPaths.USR_DIR + "/bin/bash")
+    bash.setWritable(false, false)
+    File(context.filesDir, DshPaths.USR_DIR + "/bin/bash.termux").writeText("orig")
+    bash.writeText("#!/system/bin/sh\nstale marker\n")
+    bash.setWritable(false, false)
+    assertTrue(runtime.ensureWrapper())
+    assertTrue(wrapperText().startsWith("#!/system/bin/sh"))
+    assertTrue(wrapperText().contains("/root/projects"))
+    assertFalse(bash.canWrite())
   }
 
   @Test

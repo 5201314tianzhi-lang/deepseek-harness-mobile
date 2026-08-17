@@ -16,6 +16,16 @@ class ProotRuntime(
   private val usrDir: File,
   private val workspaceDir: File,
 ) {
+  /**
+   * Interpreter of the generated bash wrapper. MUST be a system binary:
+   * the snapshot's usr/bin/sh is an app-data ELF whose kernel-level shebang
+   * exec bypasses libc (the LD_PRELOAD exec-hook cannot reroute it), and
+   * devices with the app-data exec ban refuse it with EACCES. The system
+   * shell is always exec-able, and its exec of proot goes through libc so
+   * the hook reroute still applies.
+   */
+  private val BASH_WRAPPER_SHEBANG = "#!/system/bin/sh"
+
   val prootDir: File get() = File(context.filesDir, "proot")
   val prootBin: File get() = File(prootDir, "proot")
   val rootfsDir: File get() = File(context.filesDir, DshPaths.ROOTFS_DIR)
@@ -106,28 +116,28 @@ class ProotRuntime(
     workspaceDir.mkdirs() // host side of the /root/projects bind mount
     val bash = File(usrDir, DshPaths.BASH_BIN)
     val termux = File(usrDir, DshPaths.BASH_BIN + ".termux")
-    // Wrapper considered current when it routes via proot AND carries both
-    // markers added after the first release: the proot-dir LD_LIBRARY_PATH
-    // (libtalloc/libandroid-shmem live next to the binary, outside the
-    // snapshot's usr/lib) and PROOT_TMP_DIR (proot's own temp dir — the
-    // Termux build defaults to /data/data/com.termux/files/usr/tmp, which
-    // does not exist here, so glue-rootfs/f2fs-probe creation fails). Older
-    // installs are rewritten in place.
+    // Wrapper considered current when it routes via proot AND uses the system
+    // shell as its interpreter. The v0.1.x wrapper shebang pointed at the
+    // snapshot's usr/bin/sh — an app-data ELF whose kernel-level shebang exec
+    // the exec-hook cannot reroute (LD_PRELOAD only sees libc execve), so on
+    // devices with the app-data exec ban (Android 15+, vendor W^X) the whole
+    // container chain died with EACCES. The system shell is always exec-able;
+    // its exec of proot goes through libc and the hook, so the reroute still
+    // applies. Older installs are rewritten in place.
     val wrapperUpToDate =
       bash.isFile && termux.isFile &&
-        bash.readText(Charsets.US_ASCII).contains("/root/projects")
+        bash.readText(Charsets.US_ASCII).contains(BASH_WRAPPER_SHEBANG)
     if (wrapperUpToDate) return true
     if (bash.isFile && !bash.readText(Charsets.US_ASCII).contains("#!")) {
       if (!bash.renameTo(termux)) return false
     }
-    val sh = File(usrDir, DshPaths.SH_BIN).absolutePath
     // Host-side temp dir: writable app storage. PROOT_TMP_DIR is proot's own
     // scratch space (glue rootfs, f2fs probe, mkdtemp); the container-internal
     // TMPDIR points at /tmp, which lives in the (writable) rootfs.
     val hostTmp = File(context.filesDir, "home/tmp").apply { mkdirs() }.absolutePath
     val wrapper =
       """
-      #!$sh
+      $BASH_WRAPPER_SHEBANG
       if [ ! -x "${rootfsDir.absolutePath}/${DshPaths.ROOTFS_BASH}" ]; then
         echo "Ubuntu container not installed" >&2
         exit 127
@@ -144,8 +154,10 @@ class ProotRuntime(
         -b "${workspaceDir.absolutePath}:/root/projects" \
         -w /root/projects /bin/bash "${'$'}@"
       """.trimIndent()
+    bash.setWritable(true, false) // a W^X-stripped wrapper from a prior run is read-only
     bash.writeText(wrapper)
     bash.setExecutable(true, true)
+    bash.setWritable(false, false) // W^X: vendors refuse to exec a writable wrapper
     AppLog.log("proot", "bash wrapper installed -> " + bash.absolutePath)
     return true
   }

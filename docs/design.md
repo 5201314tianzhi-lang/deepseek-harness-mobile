@@ -120,6 +120,9 @@ st_other 由 GLOBAL HIDDEN 补丁为 DEFAULT），随 APK 发布，探针找到�
 
 **已知限制**：内核解析 shebang 后的解释器 exec 不经 libc，hook 无法拦截——
 Android 15/16 上 `.sh` 脚本类工具仍受限（引擎核心为 node ELF，不受影响）。
+bash wrapper 因此**必须**用系统解释器 `#!/system/bin/sh`（v0.1.x 曾指向
+快照 `usr/bin/sh`，app-data ELF 在 exec 禁令设备上被内核拒绝 → EACCES
+容器失败，v0.1.1 重发版起改为系统 shell 并剥离 wrapper 写位）。
 
 ### 4.1 启动流程（MainActivity.startEngineFlow）
 

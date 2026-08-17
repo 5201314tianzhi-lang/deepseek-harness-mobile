@@ -2,7 +2,7 @@
 
 > 2026-08-15 审查产出。按依赖分组，P1 = 安全（优先处理），P2 = 正确性 bug，P3 = 健壮性。
 > 状态：🟥 待处理 / 🟨 处理中 / 🟩 已修复
-> 全部 24 项已修复（I-01..I-14 于 2026-08-15，I-15..I-24 于 2026-08-16 全面审查）。
+> 全部 24 项已修复（I-01..I-14 于 2026-08-15，I-15..I-24 于 2026-08-16 全面审查）；I-25 于 2026-08-17 修复。
 > 修复经 CI 质量门验证（assembleDebug + lintDebug + ktlintCheck + 单元测试 + JS/C 本地测试）。
 
 ---
@@ -244,3 +244,17 @@ P3 收尾组
 **位置**：`GuideWizard.kt` / `AndroidBridge.kt` / `ExportFlow.kt` / `MainActivity.kt` / `compat-polyfills.js`
 
 **修复**：检查更新回调回主线程；导出下载禁跟随重定向；顶部条失败路径清理（hideTopBar 公开 + 失败统一 showGuide）；冷启动顶部条 6s 后淡出（呼吸动画可被看见）；Object.groupBy null 原型累加器（`__proto__` 键原型污染）；structuredClone 支持 DataView；AbortSignal.any 透传 reason；子进程探测 30s 受限等待；更新/解压/根目录轮询 60s。
+
+### I-25 bash wrapper shebang 指向 app-data ELF → exec 禁令设备容器失败 🟩（v0.1.1 重发）
+
+**位置**：`ProotRuntime.ensureWrapper` / `ContainerProbe.smokeTest`
+
+**问题**：设备上报 `CONTAINER_FAIL: spawnSync .../usr/bin/bash EACCES`。wrapper
+shebang 指向快照 `usr/bin/sh`（app-data ELF）：内核解析 shebang 直接 exec
+解释器、绕过 libc → LD_PRELOAD exec-hook 无法重路由 → 禁令设备拒绝
+EACCES。叠加因素：wrapper 生成后保留写位（rwxr-xr-x），违反厂商 W^X。
+
+**修复**：解释器改系统 `#!/system/bin/sh`（恒可 exec，且其 exec proot 走
+libc、hook 重路由仍生效）；升级标记由 `/root/projects` 改为新 shebang
+（旧 v0.1.1 wrapper 含旧标记，必须触发重写）；生成后剥离写位（W^X），
+重写前恢复写位；删除不再使用的 `DshPaths.SH_BIN`。

@@ -27,9 +27,6 @@ object DshPaths {
   /** Bash (the proot wrapper) inside the snapshot. */
   const val BASH_BIN = "bin/bash"
 
-  /** POSIX sh inside the snapshot (wrapper shebang interpreter). */
-  const val SH_BIN = "bin/sh"
-
   /** Rootfs bash (container /bin/bash). */
   const val ROOTFS_BASH = "bin/bash"
 
