@@ -9,9 +9,9 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 
 /**
- * Boot wizard UI: full-screen guide (brand block, three-step indicator
- * runtime → container → launch, status card, action row) plus the thin
- * cold-start bar overlaying the Harness. Pure presentation — all flow
+ * Boot wizard UI: full-screen scroll guide (brand block, vertical step
+ * cards, engine status card, action grid, version line) plus the floating
+ * cold-start pill overlaying the Harness. Pure presentation — all flow
  * decisions live in the caller through the injected callbacks.
  */
 /** Cold-start bar states: STARTING breathes, FAILED persists (I-26: a failed
@@ -29,7 +29,7 @@ class GuideWizard(
   private val onOpenLog: () -> Unit,
   private val onReload: () -> Unit,
 ) {
-  val guideView: LinearLayout = buildGuideView()
+  val guideView: ScrollView = buildGuideView()
   val topStatusBar: LinearLayout = buildTopStatusBar()
 
   private var engineStatus: TextView? = null
@@ -723,6 +723,7 @@ class GuideWizard(
     val palette = GuidePalette(activity)
     val label =
       TextView(activity).apply {
+        this.text = text
         textSize = 15f
         typeface = android.graphics.Typeface.DEFAULT_BOLD
         setTextColor(0xFFFFFFFF.toInt())
