@@ -123,6 +123,14 @@ class EngineManagerTest {
   @Test
   fun `concurrent starts are single-flighted`() {
     val second = EngineManager(context)
+    // Self-contained: seed the proot runtime like the hung-process test does
+    // (Robolectric resets filesDir per test).
+    File(context.filesDir, "proot/proot").apply {
+      parentFile!!.mkdirs()
+      writeText("stub")
+    }
+    File(context.filesDir, "proot/libtalloc.so.2").writeText("stub")
+    File(context.filesDir, "proot/libandroid-shmem.so").writeText("stub")
     // Both try to acquire the CAS; only one can hold it at a time.
     assertTrue(EngineManager.STARTING.compareAndSet(false, true))
     // The second caller must not start (returns true = "deferred/ignored").

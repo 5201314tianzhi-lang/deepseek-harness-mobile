@@ -271,14 +271,16 @@ class EngineManager(
 
   /** Start the dsh web engine inside the single runtime rootfs. */
   fun startEngine(port: Int = 3080): Boolean {
-    if (!prootRuntime.ensureProot()) {
-      AppLog.log("engine", "start refused: proot runtime unavailable")
-      return false
-    }
     val now = System.currentTimeMillis()
     // Process-level CAS: only one concurrent caller actually starts the engine
-    // (device-observed EADDRINUSE on double start).
+    // (device-observed EADDRINUSE on double start). The losing caller returns
+    // immediately — even the proot check is skipped for it (single-flight).
     if (!STARTING.compareAndSet(false, true)) return true
+    if (!prootRuntime.ensureProot()) {
+      AppLog.log("engine", "start refused: proot runtime unavailable")
+      STARTING.set(false)
+      return false
+    }
     // I-11: when the engine process is dead (or was never started) there is no
     // double-start race — clear the cooldown immediately, otherwise the 5s
     // watchdog polls would keep hitting the 90s cooldown window and crash
