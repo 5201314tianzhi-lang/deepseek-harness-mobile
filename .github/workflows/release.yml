@@ -80,6 +80,18 @@ jobs:
             || { echo "keystore secret is not valid (alias 'release', storepass 'android')" >&2; exit 1; }
           ls -la release.keystore
 
+      - name: Run JVM unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest
+
+      - name: Run local JS/C tests
+        run: ./tests/run-local.sh
+
+      - name: Test coverage report (best effort)
+        run: |
+          ./gradlew jacocoTestReport || true
+
       - name: Package proot runtime (arm64)
         run: |
           # Termux proot + libtalloc + libandroid-shmem debs, unpacked into
@@ -100,18 +112,6 @@ jobs:
           readelf --dyn-syms proot | grep -q talloc || { echo "proot missing talloc ref"; exit 1; }
           mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/proot/arm64-v8a"
           cp proot libtalloc.so.2 libandroid-shmem.so "$GITHUB_WORKSPACE/app/src/main/assets/proot/arm64-v8a/"
-
-      - name: Run JVM unit tests
-        run: |
-          chmod +x gradlew
-          ./gradlew testDebugUnitTest
-
-      - name: Run local JS/C tests
-        run: ./tests/run-local.sh
-
-      - name: Test coverage report (best effort)
-        run: |
-          ./gradlew jacocoTestReport || true
 
       - name: Build release APK
         run: |
