@@ -38,6 +38,20 @@ android {
     noCompress += "xz"
   }
 
+  // We exec the proot binary straight from its extracted path
+  // (nativeLibraryDir/libproot.so) and check File(nativeLibraryDir, ...).isFile
+  // for proot + its DT_NEEDED deps. With extractNativeLibs=false (AGP 9's
+  // default for minSdk>=23) the system keeps .so compressed inside the APK and
+  // \`/data/app/<pkg>/lib/<abi>\` stays EMPTY, so the isFile probe returns false
+  // and the engine aborts with "proot runtime unavailable". Forcing legacy
+  // packaging (extractNativeLibs=true) physically extracts every jniLib .so to
+  // that directory so the runtime can find/exec them under the system linker.
+  packaging {
+    jniLibs {
+      useLegacyPackaging = true
+    }
+  }
+
   // CI signing: the release workflow drops a release.keystore at the project
   // root and signs the release variant with it; local builds without the
   // keystore keep producing the unsigned APK as before.
