@@ -116,25 +116,24 @@ class ProotRuntime(
     pickToken: String,
   ): Pair<Array<String>, Map<String, String>> {
     resolvConf()
-    val args =
-      (
-        prootOptions(rootfsDir, projectsDir) +
-          listOf(
-            "/usr/bin/env",
-            "-i",
-            "HOME=/root",
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "TERM=xterm-256color",
-            "DSH_HOME=/root/.dsh",
-            "DSH_PICK_TOKEN=" + pickToken,
-            "node",
-            "--expose-internals",
-            "/root/.dsh-arm64/node_modules/@deepseek-ai/dsh/lib/bin.js",
-            "web",
-            "--port",
-            port.toString(),
-          )
-        ).toTypedArray()
+    val cmdList =
+      prootOptions(rootfsDir, projectsDir) +
+        listOf(
+          "/usr/bin/env",
+          "-i",
+          "HOME=/root",
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "TERM=xterm-256color",
+          "DSH_HOME=/root/.dsh",
+          "DSH_PICK_TOKEN=" + pickToken,
+          "node",
+          "--expose-internals",
+          "/root/.dsh-arm64/node_modules/@deepseek-ai/dsh/lib/bin.js",
+          "web",
+          "--port",
+          port.toString(),
+        )
+    val args = cmdList.toTypedArray()
     // LD_LIBRARY_PATH spans both nativeLibraryDir (libproot.so + shmem + the
     // standard-named libtalloc.so) and filesDir (where libtalloc.so.2 is
     // mirrored) so proot's Android linker can resolve all its DT_NEEDED by

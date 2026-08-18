@@ -23,17 +23,16 @@ class ContainerProbe(
       // all proot options, leaving a bare `ProcessBuilder(["/bin/bash",...])`
       // that android resolves as the host /bin/bash (which does not exist →
       // "Cannot run program /bin/bash: No such file or directory").
-      val smokeArgs =
-        (
-          prootRuntime.prootOptions(rootfsDir, projectsDir) +
-            listOf(
-              "/bin/bash",
-              "-c",
-              "echo CONTAINER_OK; id -u",
-            )
-          ).toTypedArray()
+      val cmdList =
+        prootRuntime.prootOptions(rootfsDir, projectsDir) +
+          listOf(
+            "/bin/bash",
+            "-c",
+            "echo CONTAINER_OK; id -u",
+          )
+      val smokeArgs = cmdList.toTypedArray()
       val pb =
-        ProcessBuilder(smokeArgs).also { b ->
+        ProcessBuilder(*smokeArgs).also { b ->
           b.environment().putAll(prootRuntime.buildEngineEnv())
           b.redirectErrorStream(true)
         }
