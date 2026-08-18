@@ -47,11 +47,19 @@ class EngineManager(
   fun extractRootfs(onProgress: (Long, Long) -> Unit): Boolean =
     try {
       context.assets.openFd(DshPaths.ROOTFS_ASSET).use { fd ->
-        AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + context.filesDir)
+        // Rootfs archive holds usr/, root/, etc/ … which must land under the
+        // single-runtime rootfs directory (rootfsDir = filesDir/rootfs): proot
+        // is later started with -r rootfsDir, and the engine entry is resolved
+        // as File(rootfsDir, DSH_ENTRY). Extracting straight into filesDir made
+        // files/ hold the rootfs directly while proot looked for files/rootfs,
+        // which does not exist → "proot warning: can't sanitize binding
+        // .../files/rootfs: No such file or directory".
+        rootfsDir.mkdirs()
+        AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + rootfsDir)
         SnapshotExtractor.extract(
           context.assets.open(DshPaths.ROOTFS_ASSET),
           fd.length,
-          context.filesDir,
+          rootfsDir,
           onProgress,
         )
       }
