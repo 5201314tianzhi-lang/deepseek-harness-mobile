@@ -92,8 +92,10 @@ class ProotRuntime(
         projectsDir.absolutePath + ":/root/projects",
         "-w",
         "/root",
-        "--kill-on-exit",
-        "--",
+        // This proot build does NOT accept the `--kill-on-exit` option nor the
+        // bare `--` command separator — it aborts with "unknown option '--'".
+        // proot treats the first non-option token as the command to launch, so
+        // the engine command is placed right after the options.
         "/usr/bin/env",
         "-i",
         "HOME=/root",
