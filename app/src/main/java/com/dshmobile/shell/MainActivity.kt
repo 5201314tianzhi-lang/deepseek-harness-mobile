@@ -87,8 +87,10 @@ class MainActivity : ComponentActivity() {
     val lightFlags =
       if (palette.dark) {
         window.decorView.systemUiVisibility and
-          android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() and
-          android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+          android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            .inv() and
+          android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            .inv()
       } else {
         window.decorView.systemUiVisibility or
           android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
@@ -152,7 +154,7 @@ class MainActivity : ComponentActivity() {
 
     val root =
       FrameLayout(this).apply {
-        setBackgroundColor(GuidePalette(this).background)
+        setBackgroundColor(GuidePalette(this@MainActivity).background)
       }
     root.addView(harness.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     root.addView(

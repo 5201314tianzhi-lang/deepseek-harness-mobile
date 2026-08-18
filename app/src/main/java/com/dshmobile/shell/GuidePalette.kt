@@ -7,10 +7,14 @@ import android.content.Context
  * and values-night/colors.xml under the same names, so every color follows
  * the system theme through the configuration qualifiers — zero branching.
  */
-class GuidePalette(context: Context) {
+class GuidePalette(
+  context: Context,
+) {
   val dark: Boolean =
-    (context.resources.configuration.uiMode and
-      android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+    (
+      context.resources.configuration.uiMode and
+        android.content.res.Configuration.UI_MODE_NIGHT_MASK
+    ) ==
       android.content.res.Configuration.UI_MODE_NIGHT_YES
 
   val background: Int = context.getColor(R.color.bg_guide)

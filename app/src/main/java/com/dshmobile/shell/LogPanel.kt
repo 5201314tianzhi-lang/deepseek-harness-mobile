@@ -84,6 +84,7 @@ class LogPanel(
     val copy = ghostAction(activity.getString(R.string.button_copy_panel)) { onCopy() }
     val share = ghostAction(activity.getString(R.string.button_share)) { share() }
     val close = ghostAction(activity.getString(R.string.button_close)) { onClose() }
+
     fun gap(): View =
       View(activity).apply {
         layoutParams = LinearLayout.LayoutParams((8 * d).toInt(), (36 * d).toInt())

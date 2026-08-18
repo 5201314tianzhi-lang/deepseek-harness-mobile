@@ -8,16 +8,16 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 
+/** Cold-start bar states: STARTING breathes, FAILED persists (I-26: a failed
+ *  boot must always leave an exit), SUCCESS fades away after a delay. */
+enum class BarState { STARTING, FAILED, SUCCESS }
+
 /**
  * Boot wizard UI: full-screen scroll guide (brand block, vertical step
  * cards, engine status card, action grid, version line) plus the floating
  * cold-start pill overlaying the Harness. Pure presentation — all flow
  * decisions live in the caller through the injected callbacks.
  */
-/** Cold-start bar states: STARTING breathes, FAILED persists (I-26: a failed
- *  boot must always leave an exit), SUCCESS fades away after a delay. */
-enum class BarState { STARTING, FAILED, SUCCESS }
-
 class GuideWizard(
   private val activity: ComponentActivity,
   private val webView: android.webkit.WebView,
@@ -61,7 +61,7 @@ class GuideWizard(
 
   private val d: Float get() = activity.resources.displayMetrics.density
 
-  private val INTERPOLATOR = android.animation.PathInterpolator(0.16f, 1f, 0.3f, 1f)
+  private val interpolator = android.view.animation.PathInterpolator(0.16f, 1f, 0.3f, 1f)
 
   private var currentBarState: BarState? = null
 
@@ -148,7 +148,7 @@ class GuideWizard(
         .translationY(0f)
         .setStartDelay(delay)
         .setDuration(400)
-        .setInterpolator(INTERPOLATOR)
+        .setInterpolator(interpolator)
         .start()
       delay += 80
     }
@@ -199,7 +199,9 @@ class GuideWizard(
         BarState.FAILED -> palette.error
         BarState.SUCCESS -> palette.success
       }
-    topPulseDot?.backgroundTintList = android.content.res.ColorStateList.valueOf(dotColor)
+    topPulseDot?.backgroundTintList =
+      android.content.res.ColorStateList
+        .valueOf(dotColor)
     topStatusLabel?.text =
       when (state) {
         BarState.STARTING -> activity.getString(R.string.status_engine_starting)
@@ -214,7 +216,7 @@ class GuideWizard(
       .alpha(1f)
       .translationY(0f)
       .setDuration(250)
-      .setInterpolator(INTERPOLATOR)
+      .setInterpolator(interpolator)
       .start()
     if (state == BarState.STARTING) startTopBarPulse() else stopTopBarPulse()
     if (state == BarState.SUCCESS) scheduleTopBarHide(6000L)
@@ -322,7 +324,7 @@ class GuideWizard(
           .scaleX(1f)
           .scaleY(1f)
           .setDuration(200)
-          .setInterpolator(INTERPOLATOR)
+          .setInterpolator(interpolator)
           .start()
       }
     }
@@ -499,8 +501,12 @@ class GuideWizard(
     val progress =
       android.widget.ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
         isIndeterminate = true
-        progressTintList = android.content.res.ColorStateList.valueOf(palette.accent)
-        progressBackgroundTintList = android.content.res.ColorStateList.valueOf(palette.accentDim)
+        progressTintList =
+          android.content.res.ColorStateList
+            .valueOf(palette.accent)
+        progressBackgroundTintList =
+          android.content.res.ColorStateList
+            .valueOf(palette.accentDim)
         visibility = View.GONE
         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (4 * d).toInt())
         lp.topMargin = (16 * d).toInt()
@@ -602,7 +608,7 @@ class GuideWizard(
             shape = android.graphics.drawable.GradientDrawable.OVAL
             colors = intArrayOf(palette.accent, palette.accentEnd)
             gradientType = android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT
-            gradientAngle = 135
+            setGradientAngle(135)
           }
         val size = (52 * d).toInt()
         layoutParams = LinearLayout.LayoutParams(size, size)
@@ -643,7 +649,11 @@ class GuideWizard(
         setOnClickListener { onPrimaryAction() }
       }
     primaryButton = primary
-    fun ghost(text: String, action: () -> Unit): Button =
+
+    fun ghost(
+      text: String,
+      action: () -> Unit,
+    ): Button =
       ghostButton(text).apply {
         setOnClickListener { action() }
       }
@@ -655,9 +665,8 @@ class GuideWizard(
     val keepAlive = ghost(activity.getString(R.string.button_keep_alive)) { onKeepAlive() }
     val copyLog = ghost(activity.getString(R.string.button_copy_log)) { onCopyLog() }
     val back =
-      ghost(activity.getString(R.string.button_back_to_harness)).apply {
+      ghost(activity.getString(R.string.button_back_to_harness)) { onBackToHarness() }.apply {
         visibility = View.GONE
-        setOnClickListener { onBackToHarness() }
       }
     backButton = back
     (update.layoutParams as LinearLayout.LayoutParams).bottomMargin = sep
@@ -731,7 +740,7 @@ class GuideWizard(
     primaryLabel = label
     val chevron =
       TextView(activity).apply {
-        text = "›"
+        this.text = "›"
         textSize = 14f
         typeface = android.graphics.Typeface.DEFAULT_BOLD
         setTextColor(0xFFFFFFFF.toInt())
@@ -753,9 +762,9 @@ class GuideWizard(
           cornerRadius = (24 * d)
           colors = intArrayOf(palette.accent, palette.accentEnd)
           gradientType = android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT
-          gradientAngle = 0
+          setGradientAngle(0)
         }
-      minHeight = (48 * d).toInt()
+      minimumHeight = (48 * d).toInt()
       setPadding((20 * d).toInt(), 0, (12 * d).toInt(), 0)
       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
       addView(label)
@@ -777,7 +786,9 @@ class GuideWizard(
       } catch (_: Throwable) {
         "?"
       }
-    val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "?"
+    val abi =
+      android.os.Build.SUPPORTED_ABIS
+        .firstOrNull() ?: "?"
     return VersionLine.format(appVersion, abi, SnapshotVersion.read(activity))
   }
 
@@ -791,12 +802,13 @@ class GuideWizard(
       typeface = android.graphics.Typeface.MONOSPACE
       gravity = android.view.Gravity.CENTER_HORIZONTAL
       layoutParams =
-        LinearLayout.LayoutParams(
-          ViewGroup.LayoutParams.MATCH_PARENT,
-          ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply {
-          topMargin = (24 * d).toInt()
-        }
+        LinearLayout
+          .LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+          ).apply {
+            topMargin = (24 * d).toInt()
+          }
     }
   }
 
