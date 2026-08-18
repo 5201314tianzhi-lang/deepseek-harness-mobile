@@ -4,82 +4,46 @@ import android.content.Context
 import java.io.File
 
 /**
- * Proot single-runtime container: extracts the Termux proot binary + its
- * dependencies (libtalloc, libandroid-shmem) from APK assets and builds the
- * engine argv — the dsh web engine and the agent shell share ONE embedded
- * Debian glibc rootfs, so no wrapper and no env injection exist anymore.
- * Mirrors/workspace are pre-provisioned inside the rootfs artifact
- * (build-rootfs.sh); nothing is written into the container at runtime except
- * the resolv.conf bind source.
+ * Proot single-runtime container (B 路线修正版).
+ *
+ * 关键变更：proot 及其依赖（libandroid-shmem、libtalloc）不再放在 assets/ 由
+ * App 手动解压后 exec（那会触发 exec-app-data-ELF / W^X 安全策略导致进程强杀
+ * = 一打开就闪退）。改为打包进 jniLibs/arm64-v8a/，作为原生库由 Android 系统
+ * 装载器在安装时释放并授予可执行权限，运行时 mmap PROT_EXEC 完全合规。
+ * 对照 Operit：其 proot 正是 lib/arm64/liboperit_proot.so（系统装载器加载）。
  */
 class ProotRuntime(
   private val context: Context,
 ) {
   val prootDir: File get() = File(context.filesDir, "proot")
-  val prootBin: File get() = File(prootDir, "proot")
+  /** nativeLibraryDir = 系统释放的 lib/arm64/ 目录（jniLibs 打进去）。 */
+  val nativeLibDir: File get() = File(context.applicationInfo.nativeLibraryDir)
+  val prootBin: File get() = File(nativeLibDir, "libproot.so")
 
   fun resolvConf(): File {
     val f = File(context.filesDir, "etc/resolv.conf")
     if (!f.isFile) {
       f.parentFile?.mkdirs()
-      // AliDNS first: reachable in CN networks, where 8.8.8.8 would stall
-      // every first lookup. Google DNS kept as a secondary.
       f.writeText("nameserver 223.5.5.5\nnameserver 8.8.8.8\n")
     }
     return f
   }
 
-  private fun extractAsset(
-    name: String,
-    target: File,
-    exec: Boolean,
-  ): Boolean {
-    // Reuse an already-extracted asset: overwriting one whose write bit was
-    // stripped (W^X policy) fails with EACCES on reinstall-without-clear.
-    if (target.isFile && target.length() > 0L) return true
-    return try {
-      target.parentFile?.mkdirs()
-      context.assets.open("proot/arm64-v8a/$name").use { input ->
-        target.outputStream().use { out -> input.copyTo(out) }
-      }
-      target.setExecutable(exec, true)
-      // W^X: proot AND its shared libs must not stay writable — Huawei/EMUI
-      // refuse to exec (and mmap PROT_EXEC) a writable file, so a left-writable
-      // proot binary makes the whole container chain fail on those devices
-      // (mirrors SnapshotExtractor's write-bit strip on the snapshot ELFs).
-      target.setWritable(false, false)
-      true
-    } catch (t: Throwable) {
-      AppLog.log("proot", "extract failed: $name", t)
-      false
-    }
-  }
-
-  /** Extract proot + its shared libs from assets. True when the binary works. */
+  /** proot 与依赖已由系统装载器就位在 nativeLibraryDir（jniLibs）。 */
   fun ensureProot(): Boolean {
-    val talloc = File(prootDir, "libtalloc.so.2")
-    val shmem = File(prootDir, "libandroid-shmem.so")
-    // All three must be present: a partial extraction (interrupted) that left
-    // proot but missed a lib would otherwise pass the short-circuit and then
-    // fail at exec time with a confusing dynamic-loader error.
-    if (prootBin.isFile && prootBin.length() > 0L &&
-      talloc.isFile && talloc.length() > 0L &&
-      shmem.isFile && shmem.length() > 0L
-    ) {
-      return true
-    }
-    val ok = extractAsset("proot", prootBin, exec = true)
-    val tallocOk = extractAsset("libtalloc.so.2", talloc, exec = false)
-    val shmemOk = extractAsset("libandroid-shmem.so", shmem, exec = false)
-    AppLog.log("proot", "ensureProot executable=$ok libtalloc=$tallocOk shmem=$shmemOk")
+    val talloc = File(nativeLibDir, "libtalloc.so.2")
+    val shmem = File(nativeLibDir, "libandroid-shmem.so")
+    val ok = prootBin.isFile && prootBin.length() > 0L
+    val tallocOk = talloc.isFile && talloc.length() > 0L
+    val shmemOk = shmem.isFile && shmem.length() > 0L
+    AppLog.log("proot", "ensureProot(nativeLibraryDir) proot=$ok talloc=$tallocOk shmem=$shmemOk dir=" + nativeLibDir.absolutePath)
     return ok && tallocOk && shmemOk
   }
 
   /**
-   * Build the engine argv + env: proot with the single rootfs, engine node
-   * booted inside the container. The container env is rebuilt by `env -i`
-   * (glibc binaries, no Termux paths). LD_LIBRARY_PATH only reaches proot
-   * itself (its bionic deps live in its own dir).
+   * 构建引擎 argv + env：proot + 单一 rootfs，容器内启动 node 引擎。
+   * LD_LIBRARY_PATH 指向 nativeLibraryDir，使 proot exec 时能定位其 bionic 依赖
+   * （libandroid-shmem.so 等）。
    */
   fun buildEngineArgs(
     rootfsDir: File,
@@ -122,7 +86,7 @@ class ProotRuntime(
         "--port",
         port.toString(),
       )
-    val env = mapOf("LD_LIBRARY_PATH" to prootDir.absolutePath)
+    val env = mapOf("LD_LIBRARY_PATH" to nativeLibDir.absolutePath)
     return args to env
   }
 }
