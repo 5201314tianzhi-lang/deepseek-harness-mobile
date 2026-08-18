@@ -101,59 +101,53 @@ class EngineManager(
    * After migration the private locations hold only symlinks/kept entities;
    * the public copies are never deleted.
    */
+  /**
+   * Keep DSH_HOME fully inside the rootfs private f2fs and never migrate it to
+   * public /storage/emulated/0 (FUSE).
+   *
+   * Why this whole migration is now removed: the engine writes session logs
+   * under $DSH_HOME/sessions via an atomic "write .tmp then link() to the final
+   * name" scheme. When sessions/ was a symlink pointing at the public FUSE
+   * directory (the old migration built exactly that), link(2) hit the sdcard
+   * FUSE hard-link ban and the engine failed with "EACCES: permission denied,
+   * link". Hard links need one real filesystem; only the app-private f2fs
+   * (/data/data/<pkg>) supports them. So DSH_HOME must stay private. Any leftover
+   * host-absolute symlink dirs from a previous install are rolled back to real
+   * rootfs directories (public copies, if any, are pulled back so no data is lost).
+   */
   fun ensureDshDataHome(): File {
     val dshData = dshDataDir
     val privateDsh = File(rootfsDir, DshPaths.CONTAINER_DSH_HOME)
-    // Android < 11 has no All Files Access model and the public Documents
-    // directory is unwritable (scoped storage); migration is impossible, so
-    // keep DSH_HOME fully private. Observed on Android 10 (Huawei): the
-    // migration used to fail with FileNotFoundException on every start.
-    if (android.os.Build.VERSION.SDK_INT < 30) {
-      AppLog.log("migrate", "skipped: Android < 11 (no All Files Access), public dshdata unwritable")
-      return privateDsh
-    }
-    val marker = File(dshData, ".migrated-from")
-    if (privateDsh.isDirectory) {
-      if (marker.exists()) {
-        // Re-link (I-10): uninstall wipes the private symlinks but the public
-        // data and marker persist. Idempotently rebuild the private links so
-        // the data becomes visible again; missing public targets are skipped
-        // and already-correct links cost nothing.
-        relink(File(privateDsh, "sessions"), File(dshData, "sessions"))
-        relink(File(privateDsh, "storages"), File(dshData, "storages"))
-        relink(File(privateDsh, "attachments"), File(dshData, "attachments"))
-        // profile yml files MUST stay as real files inside the rootfs: node
-        // rewrites cordis.yml on every boot (prepareProfile), and a symlink
-        // pointing at the HOST absolute path (/storage/emulated/0/...) cannot be
-        // resolved inside the proot container -> ENOENT, engine exits 1. So
-        // instead of re-linking to the public copy, restore a local real file.
-        restoreProfilesLocal(privateDsh, dshData)
-      } else {
-        try {
-          dshData.mkdirs()
-          // 1) settings.yaml: public entity + plugin config.path points at it (see patch)
-          copyFileIfExists(File(privateDsh, "settings.yaml"), File(dshData, "settings.yaml"))
-          // 2) directory-level data: move wholesale + private symlink
-          relocateDir(File(privateDsh, "sessions"), File(dshData, "sessions"))
-          relocateDir(File(privateDsh, "storages"), File(dshData, "storages"))
-          relocateDir(File(privateDsh, "attachments"), File(dshData, "attachments"))
-          // 3) plugin configs: intentionally NOT migrated. node rewrites
-          //    cordis.yml every boot (prepareProfile); a host-absolute symlink
-          //    can't be resolved inside the proot container (ENOENT). Keep the
-          //    profile dir as real files in the rootfs; if a public backup
-          //    exists it is harmless but we still keep the local real file.
-          restoreProfilesLocal(privateDsh, dshData)
-          marker.writeText(privateDsh.absolutePath)
-          Log.i(TAG, "dshdata migration done -> " + dshData.absolutePath)
-        } catch (t: Throwable) {
-          // A failed migration must not block startup: DSH_HOME stays private,
-          // the engine still works, and the migration retries next time.
-          Log.e(TAG, "dshdata migration failed", t)
-          AppLog.log("migrate", "dshdata migration FAILED", t)
-        }
-      }
+    privateDsh.mkdirs()
+    try {
+      restoreDirsLocal(privateDsh, dshData)
+      restoreProfilesLocal(privateDsh, dshData)
+    } catch (t: Throwable) {
+      Log.w(TAG, "ensureDshDataHome local-restore step failed", t)
     }
     return privateDsh
+  }
+
+  /** Roll any previously-migrated data dir (now a host-absolute symlink) back
+   *  to a real directory inside the rootfs; copy the public backup back if
+   *  present so pre-existing data survives. */
+  private fun restoreDirsLocal(
+    privateDsh: File,
+    dshData: File,
+  ) {
+    for (name in listOf("sessions", "storages", "attachments")) {
+      val priv = File(privateDsh, name)
+      val pub = File(dshData, name)
+      if (java.nio.file.Files.isSymbolicLink(priv.toPath())) {
+        priv.delete()
+        if (pub.isDirectory) {
+          priv.mkdirs()
+          copyTree(pub, priv)
+        }
+      } else if (!priv.isDirectory) {
+        priv.mkdirs()
+      }
+    }
   }
 
   /**
@@ -196,73 +190,6 @@ class EngineManager(
       }
     }
   }
-  /**
-   * Re-link (I-10): when the public target exists, ensure the private item is
-   * a symlink pointing at it. Already-correct symlink → no-op; private real
-   * empty directory (fresh shell created by dsh after reinstall) → replaced
-   * with a symlink; private non-empty directory (may hold new data) →
-   * conservatively skipped.
-   */
-  private fun relink(
-    src: File,
-    dst: File,
-  ) {
-    if (!dst.exists()) return
-    val srcPath = src.toPath()
-    if (java.nio.file.Files
-        .isSymbolicLink(srcPath)
-    ) {
-      if (src.canonicalPath == dst.canonicalPath) return
-      src.delete()
-    } else if (src.exists()) {
-      val children = src.listFiles()
-      if (children != null && children.isEmpty()) {
-        src.delete()
-      } else {
-        Log.w(TAG, "relink skipped (non-empty): " + src.absolutePath)
-        return
-      }
-    }
-    src.parentFile?.mkdirs()
-    try {
-      java.nio.file.Files
-        .createSymbolicLink(srcPath, dst.toPath())
-    } catch (t: Throwable) {
-      Log.w(TAG, "relink failed for " + src.absolutePath, t)
-    }
-  }
-
-  /** Copy a single file when it exists. */
-  private fun copyFileIfExists(
-    src: File,
-    dst: File,
-  ) {
-    if (src.isFile) {
-      dst.parentFile?.mkdirs()
-      src.copyTo(dst, overwrite = true)
-    }
-  }
-
-  /** Move a directory wholesale to public (copy+delete-source when a cross-
-   *  mount rename fails), then leave a symlink at the original location. */
-  private fun relocateDir(
-    src: File,
-    dst: File,
-  ) {
-    if (!src.isDirectory || dst.exists()) return
-    dst.parentFile?.mkdirs()
-    if (!src.renameTo(dst)) {
-      copyTree(src, dst)
-      src.deleteRecursively()
-    }
-    try {
-      java.nio.file.Files
-        .createSymbolicLink(src.toPath(), dst.toPath())
-    } catch (t: Throwable) {
-      Log.w(TAG, "symlink failed for dir " + src.absolutePath)
-    }
-  }
-
   /** Recursively copy a directory tree (real file contents). */
   private fun copyTree(
     src: File,
