@@ -17,22 +17,24 @@ class ContainerProbe(
   /** Returns null on success, or the combined output tail on failure. */
   fun smokeTest(): String? =
     try {
-      val (args, env) = prootRuntime.buildEngineArgs(rootfsDir, projectsDir, 3080, pickToken)
-      // Keep the proot prefix, swap everything after "--" for a bounded
-      // smoke command: rootfs bash must answer (container is real).
-      val sep = args.indexOf("--")
+      // Build the proot argv DIRECTLY from prootOptions + a bounded smoke
+      // command — do NOT slice buildEngineArgs' args on a "--" separator: this
+      // proot build has no "--", so args.indexOf("--")==-1 and take(0) dropped
+      // all proot options, leaving a bare `ProcessBuilder(["/bin/bash",...])`
+      // that android resolves as the host /bin/bash (which does not exist →
+      // "Cannot run program /bin/bash: No such file or directory").
       val smokeArgs =
-        args
-          .take(sep + 1)
-          .toMutableList()
-          .apply {
-            add("/bin/bash")
-            add("-c")
-            add("echo CONTAINER_OK; id -u")
-          }
+        (
+          prootRuntime.prootOptions(rootfsDir, projectsDir) +
+            listOf(
+              "/bin/bash",
+              "-c",
+              "echo CONTAINER_OK; id -u",
+            )
+          ).toTypedArray()
       val pb =
         ProcessBuilder(smokeArgs).also { b ->
-          b.environment().putAll(env)
+          b.environment().putAll(prootRuntime.buildEngineEnv())
           b.redirectErrorStream(true)
         }
       val proc = pb.start()

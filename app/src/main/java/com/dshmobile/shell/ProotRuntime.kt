@@ -63,6 +63,48 @@ class ProotRuntime(
   private fun probinUsable(f: File): Boolean = f.isFile && f.length() > 0L
 
   /**
+   * proot 固定选项（-0 / -r rootfs / bind / -w），不含要执行的命令。
+   * 构建引擎 argv 时在它后面拼引擎命令；smoke test 在它后面拼 /bin/bash。
+   * 注意：此 proot 二进制不接受 `--` 命令分隔符，proot 把第一个非选项 token
+   * 当作要运行的命令，因此命令必须直接跟在所有选项之后（不能用 `--` 隔开）。
+   */
+  fun prootOptions(
+    rootfsDir: File,
+    projectsDir: File,
+  ): List<String> {
+    resolvConf()
+    return listOf(
+      prootBin.absolutePath,
+      "-0",
+      "-r",
+      rootfsDir.absolutePath,
+      "-b",
+      "/dev:/dev",
+      "-b",
+      "/proc:/proc",
+      "-b",
+      "/sys:/sys",
+      "-b",
+      resolvConf().absolutePath + ":/etc/resolv.conf",
+      "-b",
+      projectsDir.absolutePath + ":/root/projects",
+      "-w",
+      "/root",
+    )
+  }
+
+    /**
+   * proot 引擎进程的环境变量：LD_LIBRARY_PATH 同时指向 nativeLibraryDir
+   * （libproot.so + shmem + 标准命名的 libtalloc.so）和 filesDir（镜像出的
+   * libtalloc.so.2），使 proot 的 Android linker 能在 exec 时按 soname
+   * 解析到它全部 DT_NEEDED 依赖。
+   */
+  fun buildEngineEnv(): Map<String, String> {
+    val libPath = nativeLibDir.absolutePath + ":" + context.filesDir.absolutePath
+    return mapOf("LD_LIBRARY_PATH" to libPath)
+  }
+
+  /**
    * 构建引擎 argv + env：proot + 单一 rootfs，容器内启动 node 引擎。
    * LD_LIBRARY_PATH 指向 nativeLibraryDir，使 proot exec 时能定位其 bionic 依赖
    * （libandroid-shmem.so 等）。
@@ -75,47 +117,29 @@ class ProotRuntime(
   ): Pair<Array<String>, Map<String, String>> {
     resolvConf()
     val args =
-      arrayOf(
-        prootBin.absolutePath,
-        "-0",
-        "-r",
-        rootfsDir.absolutePath,
-        "-b",
-        "/dev:/dev",
-        "-b",
-        "/proc:/proc",
-        "-b",
-        "/sys:/sys",
-        "-b",
-        resolvConf().absolutePath + ":/etc/resolv.conf",
-        "-b",
-        projectsDir.absolutePath + ":/root/projects",
-        "-w",
-        "/root",
-        // This proot build does NOT accept the `--kill-on-exit` option nor the
-        // bare `--` command separator — it aborts with "unknown option '--'".
-        // proot treats the first non-option token as the command to launch, so
-        // the engine command is placed right after the options.
-        "/usr/bin/env",
-        "-i",
-        "HOME=/root",
-        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "TERM=xterm-256color",
-        "DSH_HOME=/root/.dsh",
-        "DSH_PICK_TOKEN=" + pickToken,
-        "node",
-        "--expose-internals",
-        "/root/.dsh-arm64/node_modules/@deepseek-ai/dsh/lib/bin.js",
-        "web",
-        "--port",
-        port.toString(),
-      )
+      (
+        prootOptions(rootfsDir, projectsDir) +
+          listOf(
+            "/usr/bin/env",
+            "-i",
+            "HOME=/root",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "TERM=xterm-256color",
+            "DSH_HOME=/root/.dsh",
+            "DSH_PICK_TOKEN=" + pickToken,
+            "node",
+            "--expose-internals",
+            "/root/.dsh-arm64/node_modules/@deepseek-ai/dsh/lib/bin.js",
+            "web",
+            "--port",
+            port.toString(),
+          )
+        ).toTypedArray()
     // LD_LIBRARY_PATH spans both nativeLibraryDir (libproot.so + shmem + the
     // standard-named libtalloc.so) and filesDir (where libtalloc.so.2 is
     // mirrored) so proot's Android linker can resolve all its DT_NEEDED by
     // soname at exec time.
-    val libPath = nativeLibDir.absolutePath + ":" + context.filesDir.absolutePath
-    val env = mapOf("LD_LIBRARY_PATH" to libPath)
+    val env = buildEngineEnv()
     return args to env
   }
 }
