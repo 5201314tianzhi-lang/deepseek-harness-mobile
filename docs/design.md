@@ -1,21 +1,28 @@
 # 壳 APK 设计（deepseek-harness-mobile）
 
-> v3.0 ｜ 2026-08-16 更新：与当前代码逐项对应（proot Ubuntu 容器、
-> 引擎生命周期归服务、进程级 token、解压/更新幂等）。审查/修复记录见 `docs/issues.md`。
+> v3.1 ｜ 2026-08-18 更新：单一内嵌 Debian rootfs（引擎与 agent shell 共用
+> 同一 proot 容器）、供应链可控（rootfs 由 dsh-io/dsh-arm64 构建、npm 依赖
+> vendored 锁定）、更新对象从快照改为 rootfs。审查/修复记录见 `docs/issues.md`。
 
 ---
 
 ## 1. 形态与边界
 
-- **纯壳**：WebView 只消费 `http://127.0.0.1:3080`（内嵌快照的 dsh web 服务）；
-  壳与引擎版本解耦（桥协议版本化 `androidBridge.version`）。
-- **自足运行时**：APK 内嵌 ~79MB xz 快照，首次安装解压出约 484MB
-  （node + bash + coreutils + dsh + 插件）到 `filesDir/usr`，无需安装 Termux。
-- **proot Ubuntu 容器（强制）**：agent 的 shell 走容器（Ubuntu 24.04 rootfs
-  约 35MB，首次从官方源下载 + SHA256 校验）；容器冒烟失败 = 引擎启动失败。
+- **纯壳**：WebView 只消费 `http://127.0.0.1:3080`（内嵌 rootfs 内 dsh web
+  服务）；壳与引擎版本解耦（桥协议版本化 `androidBridge.version`）。
+- **单一内嵌运行时**：APK 内嵌 ~64MB xz rootfs（Debian bookworm aarch64，
+  glibc Node 22 + dsh + 插件 + bash + apt + 预置国内镜像），首次安装解压到
+  `filesDir/rootfs`，**任何环节无需下载**（旧版"首次运行下载 Ubuntu 容器"
+  已废除）。
+- **引擎在容器内**：dsh web 引擎经 `proot -0 -r filesDir/rootfs` 在容器内
+  启动；agent 的 bash（`dsh-bash-local`）派生的就是同一容器内的
+  `/usr/bin/bash`——一套运行时、一个容器，无 bash 包装、无 exec-hook。
+- **供应链可控**：rootfs 与 npm 依赖树在 dsh-io/dsh-arm64 中构建（npm
+  cache + lockfile vendored 入库、`npm ci --offline` 离线安装）；更新与
+  首次分发的 rootfs 均来自自有 release，SHA-256 强制校验。
 - **零侵入**：页面侧不改动；桥能力全部经 `@JavascriptInterface` 注入。
-- **引导向导**：白色三步向导（运行时 → 容器 → 启动），就绪后由用户手动启动
-  引擎；全部就绪时冷启动直进 Harness（顶部呼吸状态条）。
+- **引导向导**：白色三步向导（运行时 → 容器冒烟 → 启动），就绪后由用户
+  手动启动引擎；全部就绪时冷启动直进 Harness（顶部呼吸状态条）。
 
 ## 2. 组件架构
 
@@ -24,8 +31,8 @@ MainActivity（编排）
  ├─ onCreate：startEngineFlow()（首次安装 + 启动）
  ├─ startEngineFlow()：CAS 防并发
  │   ├─ EngineProbe.check() —— 127.0.0.1:3080 可达性
- │   ├─ EngineManager.extractSnapshot() —— 首次解压（第 1 步）
- │   ├─ ProotRuntime + RootfsDownloader —— 容器安装（第 2 步，强制）
+ │   ├─ EngineManager.extractRootfs() —— 首次解压（第 1 步）
+ │   ├─ ProotRuntime.ensureProot() —— proot/libtalloc/libandroid-shmem 资产
  │   ├─ ContainerProbe.smokeTest() —— 容器链路冒烟（失败=引擎启动失败）
  │   └─ launchEngineInternal() —— 引擎启动 + 60s 轮询 + 前台服务
  ├─ showWeb() —— reloadIfFailed() 策略 + 冷启动顶部条 6s 淡出
@@ -39,13 +46,12 @@ AndroidBridge —— window.androidBridge JS 接口（协议 v1）
 
 EngineManager（引擎进程与数据）
  ├─ ensureDshDataHome() —— dshdata 迁移/重连（公共用户数据）
- ├─ resolveBundledHook()/UnwindResolver —— exec-hook + libunwind-patch.so
+ ├─ startEngine() —— buildEngineArgs()（proot 命令 + env）→ startWithArgs()
  └─ startWithArgs() —— exec 被拒时回退 /system/bin/linker64
 
-ProotRuntime —— proot/libtalloc/libandroid-shmem 资产 + bash 包装生成
-RootfsDownloader —— rootfs 下载（SHA256 硬校验）+ staging 原子切换
-ContainerProbe —— 容器冒烟（30s 受限等待）
-UpdateManager —— manifest 驱动在线更新（单飞 + 唯一暂存名 + 回滚）
+ProotRuntime —— proot/libtalloc/libandroid-shmem 资产 + proot 引擎命令构建
+ContainerProbe —— 容器冒烟（proot 前缀 + bash -c，30s 受限等待）
+UpdateManager —— manifest 驱动 rootfs 在线更新（单飞 + 唯一暂存名 + 回滚）
 SnapshotExtractor —— xz-tar 解压（穿越防护 + symlink/hardlink + W^X + exec 打标）
 EngineService —— 前台服务：拥有引擎生命周期 + 5s 看门狗（总 arm、异常保护）
 EngineProbe / EngineSource / Downloader / NotificationHelper / ShizukuSupport
@@ -81,64 +87,45 @@ EngineProbe / EngineSource / Downloader / NotificationHelper / ShizukuSupport
 
 ## 4. 引擎生命周期与并发控制
 
-### 4.0 通用执行层（exec 重路由）
+### 4.0 执行模型（容器内 exec）
 
-**问题**：Android 在多种场景拒绝直接 exec app-data ELF：
-- Android 15+（targetSdk 35+ 策略）；
-- 厂商 W^X 强化（华为/EMUI 拒绝"可写+可执行"文件，Android 10 实测 EACCES）；
-- 各版本/厂商差异无法逐一兼容。
+**核心思路**：引擎不再作为宿主进程跑 Termux 快照，而是作为 proot 容器内的
+glibc 进程运行：
 
-**方案**：APK 内置自研 `libexec-hook.so`（NDK，双 ABI），`LD_PRELOAD` 注入
-引擎进程树，拦截 `execve/execv/execvp/execvpe`：
-
-- 目标为**同架构 ELF** 时（e_machine 与构建 ABI 匹配），重路由为
-  `execve(/system/bin/linker64, [linker64, path, argv...])` ——系统链接器以
-  "加载 native 库"的机制加载目标（全版本、全厂商一致允许）；跨架构 ELF 与
-  非 ELF（脚本/shebang）直接放行原生 exec；
-- linker 自身精确匹配放行（前缀比较会误伤 `/system/bin/linker64-*`）；
-- 重路由**任何失败都回退原始 syscall**（linker 可能拒绝无 PT_INTERP 等
-  内核本可执行的二进制）；
-- ELF 探测 `open` 带 `O_NONBLOCK`（PATH 搜索命中 FIFO 时不挂死 exec 链）；
-  `argv == NULL`（POSIX 允许）按空 argv 处理；
-- `LD_PRELOAD` 随 linker64 加载的进程树继承，重路由覆盖全部子进程
-  （node 插件、bash、工具链）；
-- 不依赖 SELinux 域判断（区别于快照 termux-exec 仅豁免 untrusted_app_25/27）。
-
-**`_Unwind_Resume` 补丁**：Termux 的 libc++ 不导出 `_Unwind_Resume`
-（libunwind 静态链入各二进制），node-pty 等 dlopen 的原生模块加载失败。
-CI 内把快照自带 `libunwind.a` 归档链接为 `libunwind-patch.so`（符号
-st_other 由 GLOBAL HIDDEN 补丁为 DEFAULT），随 APK 发布，探针找到后并入
-`LD_PRELOAD`（exec-hook:libunwind-patch）。
-
-**三层防护**（通用，无版本/厂商特判）：
-
-| 层 | 机制 | 覆盖 |
-|---|---|---|
-| 主进程 | direct exec → EACCES 时 linker64 fallback（startWithArgs） | 全部 |
-| 子进程 | LD_PRELOAD exec-hook 重路由 → linker64 | 全部 |
-| 文件级 | 解压时剥离可执行文件写位（rwx→r-x） | 华为类 W^X |
-
-**已知限制（v0.1.4 起）**：内核解析 shebang 后的解释器 exec 不经 libc，hook
-无法拦截——而禁令设备上**脚本 exec 本身**（binfmt_script 路径）也被拒
-（v0.1.1..v0.1.3 的 `#!/system/bin/sh` + chmod 555 wrapper 在华为真机仍
-EACCES，报错与日志逐字不变）。因此 bash wrapper 从脚本改为 **NDK ELF**
-（`app/src/main/cpp/bash-wrapper.c`，lib/<abi>/bash-wrapper）：exec 被 hook
-重路由到 linker64 dlopen——与 node 完全相同的已证明可行路径，容器链不再
-出现内核脚本 exec。路径经 `DSH_FILES_DIR`/`DSH_WORKSPACE` 环境变量注入
-（linker64 加载后 `/proc/self/exe` 指向 linker，wrapper 无法自定位）。
+- 唯一原生宿主二进制是 `proot`（静态 arm64），其余一切（node、bash、
+  coreutils、dsh）都是容器内 Debian ELF，在 rootfs 内被 glibc 加载执行——
+  **不存在 app-data ELF 直接 exec 的问题**，exec-hook / libunwind-patch /
+  bash 包装脚本等一层兼容设施整体删除。
+- Android 15+ 的 app-data ELF exec 禁令若连 proot 本身也拦截
+  （`Permission denied`），`startWithArgs` 回退 `/system/bin/linker64` 拉起
+  proot（与 JNI 库同机制，app 数据恒允许）；真机验证见
+  `docs/verification/container-acceptance.md`。
+- 引擎命令（ProotRuntime.buildEngineArgs 单一事实源）：
+  `proot -0 -r <rootfs> -b /dev:/dev -b /proc:/proc -b /sys:/sys
+  -b <resolv.conf>:/etc/resolv.conf -b <projects>:/root/projects -w /root
+  --kill-on-exit -- /usr/bin/env -i HOME=/root PATH=/usr/local/sbin:…
+  TERM=xterm-256color DSH_HOME=/root/.dsh DSH_PICK_TOKEN=<token>
+  node --expose-internals /root/.dsh-arm64/node_modules/@deepseek-ai/dsh/lib/bin.js
+  web --port 3080`
+- 宿主 env 只注入 `LD_LIBRARY_PATH=filesDir/proot`（proot 的
+  libtalloc/libandroid-shmem 依赖）；`/root/.dsh-arm64` 在 rootfs 内
+  bind 可见（`-b filesDir/proot/root/.dsh-arm64:/root/.dsh-arm64`），
+  与容器 bash 共享 dsh 安装。
+- 引擎 pty（node-pty）派生的 bash 就是容器 bash——libc/环境/工具链完全一致，
+  不再有"宿主 bash vs 容器 bash"双世界。
 
 ### 4.1 启动流程（MainActivity.startEngineFlow）
 
 1. 探测引擎；运行中 → `showWeb()`（仅当页面之前加载失败才重载；失败跟踪经
    `EnginePageState`——错误页的 `onPageFinished` 不清除失败标记，重载用显式
    `loadUrl` 而非 `reload()`）。
-2. 第 1 步：未解压（`usr/bin/node` 不存在）→ 解压 + 进度反馈。
-3. 第 2 步（强制）：rootfs 缺失 → `RootfsDownloader.install()`（下载 + SHA256
-   硬校验 + staging 原子切换）；`ProotRuntime.ensureInitialized()`（proot 三
-   件套 + bash 包装）；`ContainerProbe.smokeTest()`（node → 包装 → proot →
-   容器 bash，30s 受限等待）——失败即引擎启动失败。
+2. 第 1 步：未解压（`rootfs/usr/local/bin/node` 不存在）→ 解压
+   `assets/rootfs.tar.xz` + 进度反馈。
+3. 第 2 步（强制）：`ProotRuntime.ensureProot()`（proot 三件套资产）；
+   `ContainerProbe.smokeTest()`（proot 前缀 + `bash -c 'echo CONTAINER_OK;
+   id -u'`，30s 受限等待）——失败即引擎启动失败。
 4. 第 3 步：就绪后由用户手动按"启动引擎"（`launchInFlight` CAS 防连点）；
-   冷启动快速路径（快照+容器都已就绪）直进 Harness，顶部条覆盖（呼吸点，
+   冷启动快速路径（rootfs+容器都已就绪）直进 Harness，顶部条覆盖（呼吸点，
    引擎应答后 6s 淡出）。
 5. `startEngine()`：注入 env 后 spawn；轮询探测最多 60s（冷启动 20–45s，
    冷却/并发让位的启动可越过 30s）→ 成功后拉起前台服务 + Shizuku 增强。
@@ -166,17 +153,12 @@ EADDRINUSE 死亡、形成 5s 循环）。`stopEngine` 同样受 CAS 保护（�
 
 | 变量 | 值 | 理由 |
 |---|---|---|
-| `PATH` | `usr/bin:/system/bin` | 快照自带工具链优先 |
-| `LD_LIBRARY_PATH` | `usr/lib` | Termux 库 |
-| `HOME` | `filesDir/home` | 私有域 |
-| `DSH_HOME` | `filesDir/home/.dsh` | 必须私有（见 §5.2） |
-| `TMPDIR` | `filesDir/home/tmp` | 系统 tmp 在 app 域不可写 |
-| `LD_PRELOAD` | `libexec-hook.so[:libunwind-patch.so]` | exec 重路由 + `_Unwind_Resume` 提供库（探针按需并入） |
-| `OPENSSL_CONF` | 快照 `etc/tls|etc/ssl/openssl.cnf` | Termux 编译期路径不可读，node 缺配置直接退出（实测 exit 13） |
-| `TERMUX__ROOTFS` / `TERMUX__PREFIX` | filesDir / usr | Termux 环境锚点 |
-| `TERMUX_APP__DATA_DIR` / `LEGACY` | `context.filesDir.parentFile` | Termux 兼容（运行时推导，无硬编码包路径） |
-| `TERMUX_VERSION` | 0.118.3 | 快照配套版本 |
+| `LD_LIBRARY_PATH` | `filesDir/proot` | proot 的 libtalloc/libandroid-shmem 宿主依赖 |
 | `DSH_PICK_TOKEN` | 进程级 UUID（EngineManager companion 单例） | 目录桥端点鉴权（web-compat 插件校验 `x-dsh-pick-token`）；服务重启的引擎持有同一值 |
+
+容器内环境（`/usr/bin/env -i`，与 Termux 时代无关）：`HOME=/root`、
+`PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`、
+`TERM=xterm-256color`、`DSH_HOME=/root/.dsh`（rootfs 内，私有）。
 
 exec 拒绝回退：`startWithArgs` 捕获 `Permission denied`，改经
 `/system/bin/linker64` 拉起（与 JNI 库同机制，app 数据恒允许）。
@@ -190,7 +172,7 @@ exec 拒绝回退：`startWithArgs` 捕获 `Permission denied`，改经
   整套启动 I/O 也移出主线程防 ANR）；任务体全 try/catch。
 - 看门狗**总 arm**（一旦服务运行，无论引擎当前是否在跑）：
   `scheduleWithFixedDelay` 5s，任务体全程 try/catch（一次异常 = 调度被静默
-  抑制 = 看门狗永久死亡）；探测失败且快照就绪 → `startEngine()`。
+  抑制 = 看门狗永久死亡）；探测失败且运行时就绪 → `startEngine()`。
 - `START_STICKY`：进程被杀后系统重建服务。
 - **生命周期契约**：`MainActivity.onDestroy` 从不杀引擎（后台化不得毁掉健康
   进程再冷启动一遍）；引擎进程只在**服务自身停止**时停止（`onDestroy` →
@@ -202,12 +184,11 @@ exec 拒绝回退：`startWithArgs` 捕获 `Permission denied`，改经
 
 | 路径 | 内容 |
 |---|---|
-| `filesDir/usr` | 运行时快照（引擎本体，可整体替换） |
-| `filesDir/rootfs` | Ubuntu 24.04 容器 rootfs（原子切换经 `rootfs-staging`/`rootfs-old`） |
-| `filesDir/home` | 引擎 `HOME`；`.dsh` = `DSH_HOME` |
+| `filesDir/rootfs` | 单一内嵌 Debian rootfs（glibc node + dsh + bash + apt，引擎本体，可整体替换） |
+| `filesDir/rootfs-old` / `update-stage-<uuid>` / `update-<uuid>.tar.xz` | rootfs 更新暂存与回滚（唯一命名，finally 清理） |
+| `filesDir/proot` | proot 二进制 + libtalloc + libandroid-shmem（引擎与容器共用） |
+| `filesDir/home` | 宿主侧引擎 `HOME`（容器无关；`startWithArgs` 兜底路径用） |
 | `filesDir/engine.log` | 引擎输出（合并重定向） |
-| `filesDir/update-<uuid>.tar.xz` / `update-stage-<uuid>` / `usr-old` | 更新暂存与回滚（唯一命名，finally 清理） |
-| `filesDir/libexec-hook.so` + assets `unwind/` | exec 重路由钩子 + `_Unwind_Resume` 补丁库 |
 | `/storage/emulated/0/Documents/dshdata` | 公共用户数据 |
 
 相对路径统一经 `DshPaths` 注册表（无硬编码包路径/存储路径）。
@@ -217,7 +198,8 @@ exec 拒绝回退：`startWithArgs` 捕获 `Permission denied`，改经
 **约束**：`DSH_HOME` 必须留在私有域——dsh 每次启动在
 `$DSH_HOME/profiles/node_modules` 维护 flat-module 回退（每依赖包一个
 symlink 指向引擎安装位置），公共 FUSE 禁止创建 symlink（实测 Permission
-denied），整体迁移必然崩溃。
+denied），整体迁移必然崩溃。容器化后此约束不变（容器内 `DSH_HOME=/root/.dsh`
+位于 rootfs 内，天然私有；公共数据仍经同样的宿主 bind 挂载落盘）。
 
 **数据项级迁移**（私有原位建 symlink，dsh 读写经 symlink 落到公共）：
 
@@ -237,21 +219,24 @@ denied），整体迁移必然崩溃。
 
 ### 6.1 协议
 
-1. **HTTPS** 拉取 `manifest.json`：`{url, sha256, size}`。manifest 与快照 URL
-   均强制 HTTPS；`sha256` 缺失即拒绝（无完整性保护则等于无校验）。
+1. **HTTPS** 从默认地址
+   `https://github.com/dsh-io/dsh-arm64/releases/latest/download/manifest.json`
+   拉取 `manifest.json`：`{url, sha256, size}`。manifest 与 rootfs URL 均强制
+   HTTPS；`sha256` 缺失即拒绝（无完整性保护则等于无校验）。
 2. 流式下载（64KB 缓冲，总上限 500MB，防填满存储）。
 3. SHA-256 比对（忽略大小写），不匹配删除并失败。
 4. 解压到**唯一**暂存目录 `update-stage-<uuid>`（不在运行树内；两个触发入口
    （按钮 + adb）经进程级 CAS 单飞互斥——共用固定路径的并发运行会互相删掉
-   对方的暂存目录，把空心目录换进活树），校验新 `usr/bin/node` 存在。
+   对方的暂存目录，把空心目录换进活树），校验新 rootfs 的
+   `usr/local/bin/node` 存在。
 5. 切换（带回滚）：
-   - `usr` 存在且挪不动 → 保持现状，放弃切换；
-   - `usr → usr-old` 成功但 `new usr → usr` 失败 → 回滚 `usr-old → usr`；
-     回滚也失败 → 保留 `usr-old` 供手动恢复。
+   - `rootfs` 存在且挪不动 → 保持现状，放弃切换；
+   - `rootfs → rootfs-old` 成功但 `new rootfs → rootfs` 失败 → 回滚
+     `rootfs-old → rootfs`；回滚也失败 → 保留 `rootfs-old` 供手动恢复。
    - 暂存目录与下载的 tarball 在 finally 中总是清理（失败不留 ~500MB 垃圾）。
 6. `pkill -f bin.js` 杀旧引擎 → 看门狗下轮（≤5s）从新运行时重启；pkill
    失败（不可用/没杀掉）不再吞掉——提示用户重启应用（看门狗只重启已死进程，
-   活着的旧引擎会继续跑旧快照的 inode）。
+   活着的旧引擎会继续跑旧 rootfs 的 inode）。
 
 ### 6.2 触发与测试
 
@@ -259,16 +244,15 @@ denied），整体迁移必然崩溃。
 - adb 触发：`am start -n com.dshmobile.shell/.MainActivity -a com.dshmobile.shell.action.UPDATE`。
 - **仅 debug 构建接受该 intent**：MainActivity 因 LAUNCHER 而 exported，
   release 忽略外部触发，防止任意应用触发下载+执行链路。
-- 默认 manifest URL `https://10.0.2.2:8899/manifest.json`（模拟器宿主回环）；
-  生产经 `UpdateManager.manifestUrl` 覆盖（setter 强制 HTTPS）。
+- manifest URL 由 `UpdateManager.manifestUrl` 可覆盖（setter 强制 HTTPS）。
 
 ## 7. 安全模型
 
 | 面 | 措施 |
 |---|---|
 | 明文流量 | `network_security_config.xml`：base 禁明文，仅 127.0.0.1/localhost 放行 |
-| 更新链路 | HTTPS 强制 + sha256 必填 + 大小上限（防 MITM 注入代码执行） |
-| rootfs 下载 | `SHA256SUMS` 校验**硬性**——校验获取失败即拒绝安装（绝不装未校验 rootfs） |
+| 更新链路 | HTTPS 强制 + sha256 必填 + 大小上限（防 MITM 注入代码执行）；manifest 默认指向自有 dsh-io release |
+| rootfs 分发 | rootfs 由自有 CI（dsh-io/dsh-arm64）构建（npm cache + lockfile vendored、离线安装），SHA-256 硬校验 |
 | 签名 | keystore 仅存于仓库 secret，缺失即构建失败；绝不发布或现生成（否则可伪造同签名更新包） |
 | 解压 | 每条目 canonical 路径校验，逃逸根目录即抛异常（tar slip）；symlink 判 `isSymbolicLink`（悬空链接不再永久卡死重试）；硬链接物化并同样校验目标 |
 | WebView 边界 | 仅引擎同源（scheme/host/port 精确匹配）留 WebView；外部链接交系统浏览器 |
@@ -282,7 +266,7 @@ denied），整体迁移必然崩溃。
 
 | 权限 | 用途 | 时机 |
 |---|---|---|
-| INTERNET | WebView + 探测 + 更新/rootfs 下载 | 声明 |
+| INTERNET | WebView + 探测 + 更新下载 | 声明 |
 | MANAGE_EXTERNAL_STORAGE | 外部工作区真实路径访问（All Files Access） | **Android 11+ 安装即授权**；10 及以下无此模型（外部工作区不可用） |
 | POST_NOTIFICATIONS | 通知通道 | API 33+ 运行时请求 |
 | FOREGROUND_SERVICE + FOREGROUND_SERVICE_DATA_SYNC | 保活服务（dataSync） | 声明 |
@@ -291,33 +275,32 @@ SAF 目录选择本身无需权限（用户经系统选择器授权 tree URI）�
 
 ## 9. 构建与发布
 
-- JDK 17+、compileSdk 36、targetSdk 34（Android 15+ 的 app-data ELF exec
-  限制由 linker64 回退兜底；Android 10-14 的 untrusted_app 域允许 exec
-  app_data_file）、minSdk 26。
-- W^X 兼容：华为/EMUI 拒绝执行"可写+可执行"文件（Android 10 实测 EACCES），
-  解压器对可执行文件去除写位（rwx→r-x），引擎二进制运行时不写自身。
-- AGP 9.3.1、Kotlin 2.4.10、Gradle 9.7.0（wrapper）。
-- `snapshot.tar.xz` 不入库（CI 从上游 Releases 下载进 assets/）；缺失时构建
-  loud fail 并给出获取指引（从上游 kelai141/dsh-mobile-apk 的 Releases 下载）。
+- JDK 17+、compileSdk 36、targetSdk 34、minSdk 26。
+- **rootfs 由 dsh-io/dsh-arm64 构建**：debootstrap Debian bookworm aarch64 +
+  glibc Node 22 + dsh overlay（npm 依赖 vendored：`package-lock.json` +
+  `npm-cache.tar.gz` 入库，`npm ci --offline` 安装，registry 不可达/被篡改
+  均无法构建）→ 压缩为 `dsh-arm64-rootfs-<ver>.tar.xz` 随 release 发布，
+  并附 `manifest.json`。
+- 本仓 CI/release 下载 rootfs 进 `app/src/main/assets/rootfs.tar.xz`；
+  **缺失时构建 loud fail**（`mergeDebugAssets` 前置检查）。
 - `noCompress += "xz"`：防二次压缩破坏 `openFd`。
 - lint 错误阻断（`abortOnError`，CI 质量门跑 `lintDebug`）。
-- **发布矩阵**：每腿 `-PabiFilter=<abi>` 只编一个 ABI（否则两腿产出同一通用
-  APK 仅后缀不同，且 32 位 ABI 会混入硬编码 linker64 的 hook）；
+- **单 ABI（arm64-v8a）**：rootfs 为 aarch64，x86_64 无构建；
   `-PversionName/-PversionCode` 由发布 tag 推导（v0.1.0 → 100）；
   **keystore 只读 secret** `RELEASE_KEYSTORE_B64`（缺失 exit 1）。
-- 引擎启动超时诊断：node.canExecute / 进程存活 / engine.log 全文入 AppLog；
+- 引擎启动超时诊断：node.canExecute / 进程存活 / engine.log 全文入 AppLog。
 - 依赖：androidx.activity-ktx 1.13.0、commons-compress 1.28.0、xz 1.12、
   shizuku api/provider 13.1.5（Manifest 声明 `ShizukuProvider`，否则保活桥
-  静默失效）；NDK 27.2.12479018（exec-hook 编译）。
+  静默失效）。NDK/CMake 已移除（无原生编译）。
 - AGP 9 兼容：`android.builtInKotlin=false` + `android.newDsl=false`（AGP 9
   默认启用内置 Kotlin 与新 DSL，与显式 KGP 不兼容；此组合为 flutter 生态
   同款过渡配置，见 flutter/flutter#183910）。
 
 ## 10. ABI 与页大小
 
-- 快照按 ABI 分发：x86_64 已端到端验证；arm64 由官方 Termux aarch64 源组装。
-- Android 16KB 页设备必须产出对应页大小的构建（快照内二进制与页大小绑定）。
-- APK 与快照一一对应：不混用 ABI。
+- 运行时仅构建 **arm64-v8a**（Debian rootfs 为 aarch64）。
+- Android 16KB 页设备必须产出对应页大小的构建（rootfs 内二进制与页大小绑定）。
+- 与旧版不同，不再有 x86_64 模拟器构建（Termux 快照时代产物）。
 
 ## 11. 已知限制
 
@@ -328,21 +311,28 @@ SAF 目录选择本身无需权限（用户经系统选择器授权 tree URI）�
 - 目录映射仅 `primary` 卷；其他卷回退 `content://` 不透明句柄（bash 不可直读）。
 - 更新后引擎重启由看门狗轮询驱动（≤5s 延迟），且仅当旧进程被杀成功；杀失败
   时提示用户重启应用。
-- 容器首次运行需要网络（~35MB，cdimage.ubuntu.com）；校验和获取失败拒绝安装。
+- Android 15+ app-data ELF exec 限制与华为/EMUI W^X 可能连 proot 二进制也
+  拦截；linker64 拉起回退覆盖常见场景，需真机逐项验证（见
+  `docs/verification/container-acceptance.md`）。
+- rootfs 首次解压约 64MB，慢设备需数分钟；旧版首次运行下载容器网络需求已
+  消除。
 - 系统深色依赖厂商 WebView 对 `FORCE_DARK_AUTO` 的支持，另以桥值补丁兜底。
 
 ## 12. 决策记录
 
 | 决策 | 选择 | 原因 |
 |---|---|---|
-| D1 内嵌快照 vs 依赖 Termux | 内嵌 xz 快照，解压即跑 | 免安装、离线、版本自足 |
+| D1 内嵌运行时 vs 依赖 Termux | 内嵌 xz 解压即跑 | 免安装、离线、版本自足 |
 | D2 DSH_HOME 私有 + 数据项迁移 | 私有实体 + symlink 落公共 | FUSE 禁 symlink（apk#8） |
 | D3 更新完整性 | HTTPS + sha256 必填 | 明文+可空摘要 = RCE（I-01） |
-| D4 targetSdk | 34 | Android 15+ exec 限制由 linker64 兜底；华为 W^X（可写文件禁 exec）由解压去写位解决 |
+| D4 targetSdk | 34 | Android 15+ exec 限制由容器化消除（详见 D12） |
 | D5 引擎并发 | 进程级 CAS + 90s 冷却 + 进程死亡清冷却 + 挂死 kill | 防 EADDRINUSE 双启动；崩溃快速恢复；挂死不占端口 |
 | D6 下载路径 | 应用内 HttpURLConnection → MediaStore（禁重定向） | 浏览器导航带 Origin:null 被 dsh fence 403；重定向目标不可信 |
 | D7 ACTION_UPDATE | 仅 debug | exported LAUNCHER activity 的任意触发面 |
-| D8 容器强制 | rootfs 缺失即安装，冒烟失败即引擎失败 | 保证 agent shell 环境一致性（标准发行版） |
+| D8 容器强制 | rootfs 缺失即解压，冒烟失败即引擎失败 | agent shell 与引擎同环境（标准发行版 glibc） |
 | D9 引擎生命周期 | EngineService 唯一 owner；Activity 不杀引擎；看门狗总 arm | 消除"退出即杀 + 看门狗冷启动重拉"的双重浪费与死锁 |
 | D10 pick token | 进程级单例 | 服务重启引擎后桥不失配（静默失效的目录选择） |
 | D11 签名密钥 | 仅 secret，缺失即失败 | 公开 asset/现生成 = 任何人可伪造同签名更新包 |
+| D12 单运行时容器化 | 引擎在 rootfs 内跑，删 exec-hook/libunwind/bash-wrapper/UnwindResolver/RootfsDownloader | 唯一宿主二进制只剩 proot（静态），容器内全为 glibc ELF——Android 15+ exec 禁令、华为 W^X、libunwind 缺失等整类问题从根源消除；更新对象从"快照+容器"双体合一为 rootfs |
+| D13 供应链 | rootfs 由自有 CI 构建，npm 依赖 vendored + lockfile + 离线安装 | registry 不可达/被篡改无法构建；分发路径自有可控 |
+| D14 单 ABI | 仅 arm64-v8a | rootfs 为 aarch64 单一构建 |

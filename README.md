@@ -1,43 +1,40 @@
 # deepseek-harness-mobile
 
 Android shell for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh),
-app name **深度编码**: a WebView UI over an **embedded Termux runtime snapshot**
-(extract-and-run, no Termux app required), with a **proot Ubuntu container** for the
-agent's shell, a SAF directory bridge, a keep-alive foreground service, an engine
-watchdog, and manifest-driven online runtime updates. One APK installs a full dsh
-web agent that can actually execute bash.
+app name **深度编码**: a WebView UI over a **single embedded Debian glibc rootfs**
+(extract-and-run, no Termux app required) in which the dsh **engine and the agent
+shell share one proot container**, plus a SAF directory bridge, a keep-alive
+foreground service, an engine watchdog, and manifest-driven online runtime
+updates. One APK installs a full dsh web agent that can actually execute bash.
 
 ## Features
 
-- **Embedded runtime** — ships a ~79MB APK whose `snapshot.tar.xz` asset extracts
-  to ~484MB (`node` + `bash` + coreutils + dsh + plugins) on first launch. Fully
-  offline after extraction.
-- **Ubuntu container** — a proot-based Ubuntu 24.04 rootfs (~35MB, downloaded from
-  the official Ubuntu mirrors on first run with SHA-256 verification) gives the
-  agent a standard Linux environment: `apt`, system packages, root-like access.
-  The agent's `bash` is routed into the container through a generated wrapper.
-- **Mobile UI** — white, three-step boot wizard (runtime → container → launch)
-  over `http://127.0.0.1:3080`; external links are routed to the system browser,
-  only engine-same-origin pages stay inside the WebView.
+- **Single embedded runtime** — ships a ~80MB APK whose `rootfs.tar.xz` asset
+  extracts to `filesDir/rootfs` on first launch: Debian bookworm with glibc
+  Node 22, dsh + plugins, bash, coreutils, apt and pre-provisioned China
+  mirrors. Fully offline after extraction — no download at any point.
+- **Engine inside the container** — the dsh web engine boots *inside* the
+  rootfs via proot (`node --expose-internals … web --port 3080`), so the
+  agent's bash runs in the same glibc environment that executes the engine:
+  one runtime, one container, no wrappers, no exec hooks.
+- **Supply-chain controlled** — the rootfs and the dsh overlay are built in
+  dsh-io/dsh-arm64 from vendored npm tarballs (integrity-pinned lockfile,
+  offline install); updates come from our own release with mandatory SHA-256.
+- **Mobile UI** — white, three-step boot wizard (runtime → container smoke →
+  launch) over `http://127.0.0.1:3080`; external links are routed to the
+  system browser, only engine-same-origin pages stay inside the WebView.
 - **Keep-alive** — foreground service (`dataSync` type) with a user-visible
-  notification plus a 5s watchdog that restarts a dead engine process. The engine
-  lifecycle belongs to this service (the activity never kills it).
-- **Online runtime updates** — HTTPS manifest-driven snapshot swap (download →
+  notification plus a 5s watchdog that restarts a dead engine process. The
+  engine lifecycle belongs to this service (the activity never kills it).
+- **Online runtime updates** — HTTPS manifest-driven rootfs swap (download →
   SHA-256 verify → staged extraction → atomic switch with rollback →
-  auto-restart via the watchdog); the running runtime can update itself without
-  an APK update.
-- **Universal exec layer** — a bundled `libexec-hook.so` (LD_PRELOAD) reroutes
-  every same-ABI ELF exec in the engine tree through `/system/bin/linker64`, the
-  mechanism Android permits for app data on all versions and vendors (Android 15+
-  exec bans, Huawei/EMUI W^X). The main process uses a direct-exec → linker64
-  fallback; extracted executables get the write bit stripped (rwx→r-x) for W^X
-  compliance. A bundled `libunwind-patch.so` supplies `_Unwind_Resume` so
-  node-pty loads.
-- **SAF directory bridge** — `pickDirectory` maps a user-picked tree to the real
-  path the container's bash can access directly.
+  auto-restart via the watchdog); the running runtime can update itself
+  without an APK update.
+- **SAF directory bridge** — `pickDirectory` maps a user-picked tree to the
+  real path the container's bash can access directly.
 - **Public user data** — settings, sessions, storages and attachments live in
-  `/storage/emulated/0/Documents/dshdata` (visible to file managers, backed up,
-  survives reinstall; API keys stay private).
+  `/storage/emulated/0/Documents/dshdata` (visible to file managers, backed
+  up, survives reinstall; API keys stay private).
 
 ## Architecture
 
@@ -51,16 +48,14 @@ web agent that can actually execute bash.
 | `ExportFlow` | `.../ExportFlow.kt` | In-app downloads to MediaStore Downloads (no redirect following) |
 | `NotificationHelper` | `.../NotificationHelper.kt` | Notification channel + test notifications |
 | `AppLog` | `.../AppLog.kt` | Client-visible diagnostic log (bounded ring buffer + log file, clipboard copy) |
-| `EngineManager` | `.../EngineManager.kt` | Snapshot extraction, dshdata migration/relinking, engine process env and lifecycle |
+| `EngineManager` | `.../EngineManager.kt` | Rootfs extraction, dshdata migration/relinking, engine process env and lifecycle |
 | `EngineService` | `.../EngineService.kt` | Foreground service: owns the engine lifecycle + 5s watchdog |
 | `EngineProbe` | `.../EngineProbe.kt` | HTTP reachability probe of `127.0.0.1:3080` |
 | `EngineSource` | `.../EngineSource.kt` | Engine-source URL/session-export matching |
-| `ProotRuntime` | `.../ProotRuntime.kt` | Proot + libtalloc + libandroid-shmem assets, generated bash wrapper, env injection |
-| `RootfsDownloader` | `.../RootfsDownloader.kt` | Ubuntu rootfs download, SHA-256 verify, staged atomic install |
-| `ContainerProbe` | `.../ContainerProbe.kt` | Container smoke test (node → wrapper → proot → container bash) |
+| `ProotRuntime` | `.../ProotRuntime.kt` | Proot + libtalloc + libandroid-shmem assets, proot engine command builder |
+| `ContainerProbe` | `.../ContainerProbe.kt` | Container smoke test (proot → container bash) |
 | `SnapshotExtractor` | `.../SnapshotExtractor.kt` | xz-tar extraction: traversal guard, symlinks, hard links, W^X write-bit strip, exec-attribute stamp |
-| `UnwindResolver` | `.../UnwindResolver.kt` | `_Unwind_Resume` provider resolution + pty.node load diagnostics |
-| `UpdateManager` | `.../UpdateManager.kt` | Runtime snapshot download/verify/swap (single-flight, unique staging) |
+| `UpdateManager` | `.../UpdateManager.kt` | Runtime rootfs download/verify/swap (single-flight, unique staging) |
 | `Downloader` | `.../Downloader.kt` | Shared HTTP download + SHA-256 |
 | `DshPaths` | `.../DshPaths.kt` | Central registry of app-relative paths (no hardcoded package paths) |
 | `ShizukuSupport` | `.../ShizukuSupport.kt` | Shizuku server/permission detection + appops background-exemption boost flow |
@@ -70,16 +65,16 @@ web agent that can actually execute bash.
 
 ### First-run flow (`MainActivity.onCreate`)
 
-1. **Step 1 — runtime**: extract the embedded snapshot to `filesDir/usr`
-   (progress shown), then
-2. **Step 2 — container** (mandatory): download the Ubuntu rootfs if missing
-   (SHA-256 verified against `SHA256SUMS`), install proot + libtalloc +
-   libandroid-shmem, generate the `usr/bin/bash` wrapper, and smoke-test the
-   whole chain inside the container (`echo CONTAINER_OK; id`). A failing
-   container counts as an engine-start failure.
+1. **Step 1 — runtime**: extract the embedded rootfs to `filesDir/rootfs`
+   (progress shown; the rootfs already contains node, dsh, bash and apt), then
+2. **Step 2 — container smoke**: `proot -0 -r <rootfs>` must answer
+   `echo CONTAINER_OK; id` inside the container; this is the exact engine
+   invocation chain minus the node command. A failing container counts as an
+   engine-start failure.
 3. **Step 3 — launch**: the user presses "Launch engine"; the engine starts
-   (`node --expose-internals <usr>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js
-   web --port 3080`) and the page is polled for up to 60s.
+   *inside* the container (`proot … node --expose-internals
+   /root/.dsh-arm64/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080`)
+   and the page is polled for up to 60s.
 4. **Quick path** — when everything is already provisioned, the app cold-starts
    straight into the Harness under a thin status bar (breathing pulse dot,
    fades out 6s after the engine answers).
@@ -108,17 +103,18 @@ trigger it; a double-threaded extract/start would kill the engine process).
 
 ### Container integration
 
-- Integration point: the agent's `dsh-bash-local` spawns `bash` from `PATH`;
-  `usr/bin/bash` is a runtime-generated shebang wrapper that routes into proot.
-  The original bash stays as `bash.termux`.
-- The wrapper injects `LD_LIBRARY_PATH` (proot's libtalloc/libandroid-shmem),
-  `PROOT_TMP_DIR` (proot needs a writable temp dir; the Termux default is
-  inaccessible) and `TMPDIR` (container temp).
-- `ContainerProbe` runs the exact agent chain (node → wrapper → proot → container
-  bash) with a bounded 30s wait; failure = engine start failure.
+- Single container: the engine runs under `proot -0 -r filesDir/rootfs` and
+  the agent's `dsh-bash-local` spawns the very same container's `/usr/bin/bash`
+  — one glibc world for both.
+- `ProotRuntime` builds the proot command line: bind-mounts `/dev`, `/proc`,
+  `/sys` and a host-backed resolv.conf; `/root/projects` is host-backed by
+  `Documents/dshdata/projects` so user data survives and the container can
+  reach picked directories.
+- The container's bash needs no wrapper: the same `bash` binary that the
+  engine's pty spawns is the container bash (`/root/.dsh-arm64` is bind-visible
+  inside the rootfs via its own directory).
 - **Pre-provisioned workspace**: `/root/projects` (the agent's working
-  directory, host-backed by `Documents/dshdata/projects`) is created with the
-  container.
+  directory) is created with the container.
 - **China mirror sources preconfigured** (once, editable): apt → Tsinghua
   TUNA (Aliyun alternative commented), pip → TUNA PyPI, npm → npmmirror,
   cargo → TUNA sparse registry, Go → goproxy.cn, RubyGems → TUNA, Composer →
@@ -130,12 +126,11 @@ trigger it; a double-threaded extract/start would kill the engine process).
 
 | Path | Purpose |
 |---|---|
-| `filesDir/usr` | Extracted runtime snapshot (node, bash, coreutils, dsh, plugins) |
-| `filesDir/rootfs` | Ubuntu 24.04 container rootfs (`rootfs-staging`/`rootfs-old` during atomic swap) |
-| `filesDir/home` | `HOME` for the engine; `filesDir/home/.dsh` is `DSH_HOME` (private, holds `.credentials.yaml`) |
+| `filesDir/rootfs` | Extracted Debian bookworm rootfs (glibc node, bash, coreutils, dsh, plugins, apt) |
+| `filesDir/rootfs-old`, `rootfs-staging`, `update-<uuid>.tar.xz` | Rootfs-update staging/rollback (unique names, always cleaned) |
+| `filesDir/proot` | Proot binary + libtalloc + libandroid-shmem assets |
+| `filesDir/home` | `HOME` for the engine process; `filesDir/home/.dsh` is `DSH_HOME` (private, holds `.credentials.yaml`) |
 | `filesDir/engine.log` | Engine stdout/stderr (redirected, merged) |
-| `filesDir/update-<uuid>.tar.xz`, `update-stage-<uuid>`, `usr-old` | Runtime-update staging/rollback (unique names, always cleaned) |
-| `filesDir/libexec-hook.so`, `unwind` assets | Exec-reroute hook + `_Unwind_Resume` patch lib |
 | `/storage/emulated/0/Documents/dshdata` | User data: `settings.yaml`, `sessions/`, `storages/`, `attachments/`, `profiles/{web,headless}/` |
 
 User data is migrated item-by-item from the private `DSH_HOME` to the public
@@ -216,16 +211,18 @@ points (`shouldOverrideUrlLoading` + download listener) by an in-flight guard.
 
 ## Online runtime update protocol
 
-1. The app fetches `manifest.json` over **HTTPS**: `{url, sha256, size}`.
-   The manifest URL and the snapshot URL are both enforced HTTPS; a missing
-   `sha256` rejects the update (no integrity protection otherwise).
-2. The snapshot is downloaded streaming with a 500MB cap, SHA-256 is verified
+1. The app fetches `manifest.json` over **HTTPS** from the default URL
+   `https://github.com/dsh-io/dsh-arm64/releases/latest/download/manifest.json`:
+   `{url, sha256, size}`. The manifest URL and the rootfs URL are both enforced
+   HTTPS; a missing `sha256` rejects the update (no integrity protection
+   otherwise).
+2. The rootfs is downloaded streaming with a 500MB cap, SHA-256 is verified
    against the manifest.
 3. It is extracted to a **unique** staging directory (`update-stage-<uuid>`,
    never touching the live tree; concurrent runs are single-flighted), the new
-   `usr` is validated (must contain `bin/node`), then swapped:
-   `usr → usr-old → new usr`, with rollback if the swap fails. Staging and
-   tarball are always cleaned up.
+   rootfs is validated (must contain `usr/local/bin/node`), then swapped:
+   `rootfs → rootfs-old → new rootfs`, with rollback if the swap fails.
+   Staging and tarball are always cleaned up.
 4. The old engine process is killed (`pkill -f bin.js`); if the kill fails the
    user is told to restart the app (the watchdog only restarts a dead engine).
    Otherwise the EngineService watchdog restarts it from the new runtime within
@@ -234,22 +231,20 @@ points (`shouldOverrideUrlLoading` + download listener) by an in-flight guard.
 Test trigger: `adb shell am start -n com.dshmobile.shell/.MainActivity -a com.dshmobile.shell.action.UPDATE`
 (debug builds only — the activity is exported as the LAUNCHER, so release
 builds ignore the intent to prevent external download+execute triggers).
-Status is written to `files/update-status.txt`. The default manifest URL
-(`https://10.0.2.2:8899/manifest.json`) targets the emulator host loopback;
-production builds override it via `UpdateManager.manifestUrl`.
+Status is written to `files/update-status.txt`.
 
 ## Build
 
 Requirements: JDK 17+, Android SDK (compileSdk 36), Gradle 9.7.0 via wrapper.
 
 ```sh
-# 1. Prepare the runtime snapshot (required, distributed as a CI asset)
-#    The release workflow downloads snapshot-arm64.tar.xz / snapshot-x86_64.tar.xz
-#    from the upstream releases and bundles it into assets/.
+# 1. Prepare the runtime rootfs (required, distributed as a CI asset)
+#    The CI/release workflow downloads dsh-arm64-rootfs-*.tar.xz from the
+#    dsh-io/dsh-arm64 release and bundles it into assets/.
 mkdir -p app/src/main/assets
-cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
+cp rootfs/rootfs.tar.xz app/src/main/assets/rootfs.tar.xz
 
-# 2. Build (fails loudly when the snapshot is missing)
+# 2. Build (fails loudly when the rootfs is missing)
 ./gradlew assembleDebug
 # output: app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -278,23 +273,23 @@ Run the tests locally:
 
 ```sh
 ./gradlew testDebugUnitTest   # JVM unit tests (JUnit4 + Robolectric + mockk)
-./tests/run-local.sh          # JS polyfill tests + exec-hook C tests (node + gcc)
+./tests/run-local.sh          # JS polyfill tests (node)
 ```
 
 Build config: AGP 9.3.1, Kotlin 2.4.10, minSdk 26, targetSdk 34 (Android 15+
-app-data ELF exec restrictions are covered by the linker64 fallback). The
-extractor strips the write bit from executables (W^X: Huawei/EMUI refuse to
-execute writable files). `snapshot.tar.xz` is excluded from resource
-compression (`noCompress += "xz"`); Android lint errors block the build
-(`abortOnError`). **The signing keystore lives only in the repo secret
-`RELEASE_KEYSTORE_B64`** — the workflow refuses to build without it (never
-publishes or generates keys).
+app-data ELF exec restrictions affect the native proot binary, which is why
+the engine runs only under glibc-in-container: the extracted rootfs + proot
+stay fully offline and verifiable). A single ABI is built: **arm64-v8a**.
+`rootfs.tar.xz` is excluded from resource compression (`noCompress += "xz"`);
+Android lint errors block the build (`abortOnError`). **The signing keystore
+lives only in the repo secret `RELEASE_KEYSTORE_B64`** — the workflow refuses
+to build without it (never publishes or generates keys).
 
 ## Permissions
 
 | Permission | Purpose |
 |---|---|
-| `INTERNET` | WebView + engine probe + rootfs/update downloads |
+| `INTERNET` | WebView + engine probe + runtime update downloads |
 | `MANAGE_EXTERNAL_STORAGE` | External workspace: container bash reaches user-picked directories. On Android 11+ this is granted at install time (All Files Access); on Android 10 and below the model does not exist and the external workspace is unavailable |
 | `POST_NOTIFICATIONS` | Notification channel (requested at runtime on API 33+) |
 | `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` | Keep-alive service (`dataSync` type) |
@@ -302,18 +297,11 @@ publishes or generates keys).
 SAF directory picking needs no permission (the user authorizes the tree URI
 through the system picker).
 
-## ABI & pagesize
+## ABI
 
-Releases publish one APK per ABI (the embedded snapshot is architecture-
-specific):
-
-- **arm64-v8a** — for ARM64 phones/tablets (most real devices)
-- **x86_64** — for x86_64 emulators (MuMu, LDPlayer, etc.)
-
-The x86_64 snapshot is verified end-to-end; arm64 snapshots are assembled from
-the official Termux aarch64 repo (see `docs/design.md` §ABI). A 16KB-page build
-must be produced on a 16KB device. Choose the APK matching your device's ABI —
-installing the wrong one extracts fine but the engine cannot execute.
+The runtime is built for **arm64-v8a only** (the Debian rootfs is aarch64; the
+engine cannot run on x86_64 devices). A 16KB-page build must be produced on a
+16KB device.
 
 ## Known limitations
 
@@ -326,12 +314,17 @@ installing the wrong one extracts fine but the engine cannot execute.
 - The engine restarts from the new runtime only after the watchdog's next poll
   (up to ~5s after the swap), and only if the old process was successfully
   killed; a missed kill surfaces a restart hint.
-- The Ubuntu container needs network on first run (~35MB from
-  cdimage.ubuntu.com); a failed checksum fetch refuses the install (no
-  unverified rootfs).
+- Android 15+ app-data ELF exec restrictions and Huawei/EMUI W^X may block
+  even the proot binary in app data; the linker64 spawn fallback covers the
+  common cases — verify on real devices (see `docs/verification/container-acceptance.md`).
+- The rootfs is ~64MB on first launch (APK asset); extraction takes a few
+  minutes on slow devices.
 
 ## Related projects
 
+- [dsh-arm64](https://github.com/dsh-io/dsh-arm64) — builds the embedded
+  Debian rootfs (node, dsh overlay, vendored npm) and publishes it as a
+  release asset
 - [dsh-shell-termux](https://github.com/kelai141/dsh-shell-termux) — shell
 - [dsh-client-ui-responsive](https://github.com/kelai141/dsh-client-ui-responsive) — mobile UI
 - [dsh-host-web-compat](https://github.com/kelai141/dsh-host-web-compat) — browser compatibility
