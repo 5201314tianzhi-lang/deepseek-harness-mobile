@@ -608,7 +608,7 @@ class GuideWizard(
             shape = android.graphics.drawable.GradientDrawable.OVAL
             colors = intArrayOf(palette.accent, palette.accentEnd)
             gradientType = android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT
-            setGradientAngle(135)
+            orientation = android.graphics.drawable.GradientDrawable.Orientation.TL_BR
           }
         val size = (52 * d).toInt()
         layoutParams = LinearLayout.LayoutParams(size, size)
@@ -762,7 +762,7 @@ class GuideWizard(
           cornerRadius = (24 * d)
           colors = intArrayOf(palette.accent, palette.accentEnd)
           gradientType = android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT
-          setGradientAngle(0)
+          orientation = android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT
         }
       minimumHeight = (48 * d).toInt()
       setPadding((20 * d).toInt(), 0, (12 * d).toInt(), 0)
