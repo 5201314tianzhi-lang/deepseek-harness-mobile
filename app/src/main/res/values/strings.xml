@@ -12,8 +12,8 @@
   <string name="button_copy_log">Copy diagnostic log</string>
   <string name="button_back_to_harness">Back to Harness</string>
   <string name="button_launch_engine">Launch engine</string>
-  <string name="container_install_done">Ubuntu container ready</string>
-  <string name="container_install_failed">Ubuntu container install failed</string>
+  <string name="container_install_done">Runtime ready</string>
+  <string name="container_install_failed">Runtime install failed</string>
   <string name="notif_log_copied">Diagnostic log copied</string>
   <string name="notif_log_copied_detail">%1$s lines copied to the clipboard — paste them into your bug report</string>
 
@@ -40,9 +40,9 @@
   <string name="status_engine_starting">Starting engine…</string>
   <string name="status_engine_starting_detail">Cold start can take up to a minute. Tap for details.</string>
   <string name="status_engine_error_detail">Tap for details.</string>
-  <string name="status_container_installing">Installing Ubuntu container…</string>
-  <string name="status_container_installing_detail">Downloading ~35 MB, one-time setup</string>
-  <string name="status_container_init_failed">Ubuntu container failed to initialize. Please retry.</string>
+  <string name="status_container_installing">Preparing runtime…</string>
+  <string name="status_container_installing_detail">One-time local setup</string>
+  <string name="status_container_init_failed">Runtime failed to initialize. Please retry.</string>
   <string name="status_ready_to_launch">Everything is ready</string>
   <string name="status_ready_to_launch_detail">Launch the engine to enter your workspace</string>
 
@@ -54,22 +54,22 @@
 
   <!-- Runtime update (UpdateManager) -->
   <string name="update_checking">Checking for updates…</string>
-  <string name="update_downloading">Downloading snapshot (%1$d MB)…</string>
+  <string name="update_downloading">Downloading runtime (%1$d MB)…</string>
   <string name="update_verifying">Verifying…</string>
-  <string name="update_extracting">Extracting new snapshot…</string>
+  <string name="update_extracting">Extracting new runtime…</string>
   <string name="update_switching">Switching runtime…</string>
   <string name="update_done">Update complete; the engine restarted</string>
   <string name="update_failed">Update failed: %1$s</string>
   <string name="err_manifest_https">The manifest URL must use HTTPS</string>
-  <string name="err_snapshot_url_https">The snapshot download URL must use HTTPS</string>
+  <string name="err_snapshot_url_https">The runtime download URL must use HTTPS</string>
   <string name="err_manifest_no_sha">The manifest is missing sha256</string>
   <string name="err_sha_mismatch">SHA256 mismatch: %1$s</string>
-  <string name="err_new_snapshot_no_node">The new snapshot is missing node</string>
+  <string name="err_new_snapshot_no_node">The new runtime is missing node</string>
   <string name="err_old_runtime_switch">Could not move the old runtime aside</string>
-  <string name="err_switch_failed_rollback">Switch failed and rollback failed (usr-old kept)</string>
+  <string name="err_switch_failed_rollback">Switch failed and rollback failed (rootfs-old kept)</string>
   <string name="err_switch_failed_rolled_back">Switch failed; rolled back</string>
   <string name="err_download_http">Download HTTP %1$d</string>
-  <string name="err_snapshot_too_large">Snapshot file too large</string>
+  <string name="err_snapshot_too_large">Runtime file too large</string>
   <string name="err_manifest_http">Manifest HTTP %1$d</string>
 
   <!-- Engine foreground service -->

@@ -8,11 +8,23 @@ package com.dshmobile.shell
  * they are platform-fixed and appear once per usage site.
  */
 object DshPaths {
-  /** Snapshot root under filesDir (usr/). */
-  const val USR_DIR = "usr"
-
-  /** Rootfs root under filesDir (rootfs/). */
+  /** Single runtime rootfs under filesDir (rootfs/). */
   const val ROOTFS_DIR = "rootfs"
+
+  /** Rootfs archive (assets). */
+  const val ROOTFS_ASSET = "rootfs.tar.xz"
+
+  /** Node inside the rootfs. */
+  const val ROOTFS_NODE = "usr/local/bin/node"
+
+  /** dsh entry inside the rootfs (overlay at /root/.dsh-arm64). */
+  const val DSH_ENTRY = "root/.dsh-arm64/node_modules/@deepseek-ai/dsh/lib/bin.js"
+
+  /** Rootfs bash (container /bin/bash). */
+  const val ROOTFS_BASH = "bin/bash"
+
+  /** Container dsh home (DSH_HOME, private inside the rootfs). */
+  const val CONTAINER_DSH_HOME = "root/.dsh"
 
   /** Agent workspace inside the container: /root/projects (host-backed by
    *  Documents/dshdata/projects through the proot bind mount). */
@@ -20,21 +32,6 @@ object DshPaths {
 
   /** Host-side projects directory (inside the public dshdata). */
   const val PROJECTS_DIR = "projects"
-
-  /** Node executable inside the snapshot. */
-  const val NODE_BIN = "bin/node"
-
-  /** Bash (the proot wrapper) inside the snapshot. */
-  const val BASH_BIN = "bin/bash"
-
-  /** Rootfs bash (container /bin/bash). */
-  const val ROOTFS_BASH = "bin/bash"
-
-  /** node-pty native module inside the snapshot. */
-  const val PTY_NODE = "lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/build/Release/pty.node"
-
-  /** Embedded snapshot archive (assets). */
-  const val SNAPSHOT_ASSET = "snapshot.tar.xz"
 
   /** Old-WebView compatibility layer (assets). */
   const val COMPAT_JS_ASSET = "js/compat-polyfills.js"

@@ -45,19 +45,6 @@ class MainActivity : ComponentActivity() {
    *  could never be released and multiple locks would leak). */
   private var wakeLock: PowerManager.WakeLock? = null
 
-  /** Container smoke probe: runs a real command inside the proot container
-   *  through the same chain the agent uses (node → bash wrapper → proot). */
-  private val containerProbe by lazy {
-    ContainerProbe(
-      engineManager.usrDir,
-      engineManager.homeDir,
-      engineManager.nodeBin,
-      engineManager.execHookPath,
-      engineManager.opensslConfEnv(),
-      File(engineManager.ensureDshDataHome(), DshPaths.PROJECTS_DIR),
-    )
-  }
-
   /** Testable update trigger (see onCreate); derived from the package so
    *  a package rename never leaves a stale action literal. */
   private val actionUpdate: String get() = packageName + ".action.UPDATE"
@@ -174,12 +161,12 @@ class MainActivity : ComponentActivity() {
     applyTheme()
     harness.configure()
 
-    // Quick path: snapshot AND mandatory container already provisioned →
-    // go straight to the Harness; the cold start is covered by the thin
-    // status bar, not the full-screen guide.
+    // Quick path: rootfs AND container already provisioned → go straight to
+    // the Harness; the cold start is covered by the thin status bar, not the
+    // full-screen guide.
     val provisioned =
-      File(filesDir, DshPaths.USR_DIR + "/" + DshPaths.NODE_BIN).isFile &&
-        File(filesDir, DshPaths.ROOTFS_DIR + "/" + DshPaths.ROOTFS_BASH).isFile
+      File(filesDir, DshPaths.ROOTFS_DIR + "/" + DshPaths.ROOTFS_BASH).isFile &&
+        File(filesDir, DshPaths.ROOTFS_DIR + "/" + DshPaths.DSH_ENTRY).isFile
     if (provisioned) {
       harness.view.visibility = View.VISIBLE
     } else {
@@ -299,15 +286,17 @@ class MainActivity : ComponentActivity() {
           return@Thread
         }
         var setupRan = false
+        val prootRuntime = ProotRuntime(this)
+        val rootfsDir = engineManager.rootfsDir
         if (!engineManager.engineReady) {
           runOnUiThread {
             showGuide()
             wizard.renderSteps(0, 0)
             wizard.showGuideStatus(getString(R.string.status_first_extract), null, true)
           }
-          AppLog.log("boot", "extracting snapshot to " + engineManager.usrDir)
+          AppLog.log("boot", "extracting rootfs to " + rootfsDir)
           val ok =
-            engineManager.extractSnapshot { done, _ ->
+            engineManager.extractRootfs { done, _ ->
               runOnUiThread {
                 // done is extracted bytes; total is the archive bytes (different
                 // baselines) — show only the extracted amount.
@@ -328,41 +317,22 @@ class MainActivity : ComponentActivity() {
           setupRan = true
           AppLog.log("boot", "extract ok, engineReady=" + engineManager.engineReady)
         }
-        // Step 2 — Ubuntu container is mandatory: install when missing, then
-        // initialize (proot runtime + wrapper) and smoke-test the full chain
-        // (proot deps, PROOT_TMP_DIR, wrapper, rootfs bash) with a real
-        // in-container command. A failing container counts as an engine start
-        // failure — the engine is not started without it. Every sub-step is
-        // logged under boot: so the container init is visible in diagnostics.
-        val proot = ProotRuntime(this, engineManager.usrDir, File(engineManager.ensureDshDataHome(), DshPaths.PROJECTS_DIR))
-        if (!proot.rootfsReady()) {
+        // Step 2 — container is mandatory: proot runtime must be present and
+        // a real in-container command must pass (rootfs bash + node). A
+        // failing container counts as an engine start failure — the engine is
+        // not started without it. Every sub-step is logged under boot: so the
+        // container init is visible in diagnostics.
+        if (!prootRuntime.ensureProot()) {
+          AppLog.log("boot", "container init FAILED: proot runtime unavailable")
           runOnUiThread {
             wizard.renderSteps(1, 1)
-            wizard.showGuideStatus(
-              getString(R.string.status_container_installing),
-              getString(R.string.status_container_installing_detail),
-              true,
-            )
+            wizard.showGuideError(getString(R.string.status_container_init_failed))
           }
-          AppLog.log("boot", "container init: rootfs missing, downloading")
-          val ok = RootfsDownloader.install(applicationContext)
-          if (!ok) {
-            AppLog.log("boot", "container init FAILED: rootfs install failed")
-            runOnUiThread {
-              wizard.renderSteps(1, 1)
-              wizard.showGuideError(getString(R.string.container_install_failed))
-            }
-            return@Thread
-          }
-          setupRan = true
-          AppLog.log("boot", "container init: rootfs installed")
+          return@Thread
         }
-        AppLog.log(
-          "boot",
-          "container init: proot runtime=" + proot.ensureInitialized() +
-            " rootfs=" + proot.rootfsReady(),
-        )
-        val smoke = containerProbe.smokeTest()
+        val projectsDir = File(engineManager.ensureDshDataHome(), DshPaths.PROJECTS_DIR)
+        val probe = ContainerProbe(prootRuntime, rootfsDir, projectsDir, EngineManager.pickToken)
+        val smoke = probe.smokeTest()
         if (smoke != null) {
           AppLog.log("boot", "container init FAILED: " + smoke)
           runOnUiThread {

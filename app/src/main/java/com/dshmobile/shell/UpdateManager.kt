@@ -8,11 +8,11 @@ import java.net.URL
 import java.security.MessageDigest
 
 /**
- * Runtime snapshot online update (M2): fetch a manifest {url, sha256, size},
- * download the snapshot, verify its SHA-256, extract to a staging directory
- * outside the live tree, then swap usr with the staged copy (usr → usr-old →
- * new usr) with rollback on failure. The engine restart is handled by the
- * EngineService watchdog on the next poll.
+ * Single-runtime rootfs online update: fetch a manifest {url, sha256, size},
+ * download the rootfs archive, verify its SHA-256, extract to a staging
+ * directory outside the live tree, then swap rootfs with the staged copy
+ * (rootfs → rootfs-old → new rootfs) with rollback on failure. The engine
+ * restart is handled by the EngineService watchdog on the next poll.
  */
 class UpdateManager(
   private val context: Context,
@@ -78,29 +78,31 @@ class UpdateManager(
         }
 
         onStatus(context.getString(R.string.update_extracting))
-        // The archive holds a usr/ prefix; stage it OUTSIDE the live tree.
+        // The archive IS the rootfs (no usr/ prefix); stage it OUTSIDE the
+        // live tree and swap rootfs → rootfs-old → new rootfs.
         SnapshotExtractor.extract(
           tmp.inputStream(),
           manifest.optLong("size", 0),
           stage,
           { _, _ -> },
         )
-        val newUsr = File(stage, "usr")
-        if (!File(newUsr, "bin/node").exists()) throw IllegalStateException(context.getString(R.string.err_new_snapshot_no_node))
+        if (!File(stage, DshPaths.ROOTFS_NODE).exists()) {
+          throw IllegalStateException(context.getString(R.string.err_new_snapshot_no_node))
+        }
 
         onStatus(context.getString(R.string.update_switching))
-        val usr = File(context.filesDir, "usr")
-        val old = File(context.filesDir, "usr-old")
+        val rootfs = File(context.filesDir, DshPaths.ROOTFS_DIR)
+        val old = File(context.filesDir, "rootfs-old")
         deleteRecursively(old)
-        if (usr.exists() && !usr.renameTo(old)) {
+        if (rootfs.exists() && !rootfs.renameTo(old)) {
           // Cannot move the old runtime aside: keep it in place, do not switch (I-08).
           throw IllegalStateException(context.getString(R.string.err_old_runtime_switch))
         }
-        if (!newUsr.renameTo(usr)) {
+        if (!stage.renameTo(rootfs)) {
           // Cannot move the new runtime in: roll the old one back so the
           // engine stays usable (I-08).
-          if (old.exists() && !old.renameTo(usr)) {
-            // Rollback also failed (rare, e.g. storage fault): keep usr-old
+          if (old.exists() && !old.renameTo(rootfs)) {
+            // Rollback also failed (rare, e.g. storage fault): keep rootfs-old
             // for manual recovery.
             throw IllegalStateException(context.getString(R.string.err_switch_failed_rollback))
           }
@@ -213,11 +215,12 @@ class UpdateManager(
   }
 
   companion object {
-    /** Emulator reaches the host loopback alias; production overrides via manifestUrl. */
-    const val DEFAULT_MANIFEST_URL = "https://10.0.2.2:8899/manifest.json"
+    /** Single-runtime rootfs updates come from dsh-io/dsh-arm64 releases. */
+    const val DEFAULT_MANIFEST_URL =
+      "https://github.com/dsh-io/dsh-arm64/releases/latest/download/manifest.json"
 
-    /** Total-size cap for snapshot downloads: the bundled snapshot is ~70MB,
-     *  500MB leaves ample headroom while preventing storage exhaustion (I-09). */
+    /** Total-size cap for rootfs downloads: the artifact is ~80MB; 500MB
+     *  leaves ample headroom while preventing storage exhaustion (I-09). */
     const val MAX_SNAPSHOT_BYTES = 500L * 1024 * 1024
 
     /** Process-level single-flight guard (both update entry points share it). */

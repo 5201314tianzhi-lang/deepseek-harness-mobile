@@ -18,7 +18,7 @@ object SnapshotVersion {
     val file =
       File(
         context.filesDir,
-        DshPaths.USR_DIR + "/lib/node_modules/@deepseek-ai/dsh/package.json",
+        DshPaths.ROOTFS_DIR + "/root/.dsh-arm64/node_modules/@deepseek-ai/dsh/package.json",
       )
     val version =
       try {

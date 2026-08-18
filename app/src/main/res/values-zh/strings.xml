@@ -14,8 +14,8 @@
   <string name="step_container">容器</string>
   <string name="step_launch">启动</string>
   
-  <string name="container_install_done">Ubuntu 容器已就绪</string>
-  <string name="container_install_failed">Ubuntu 容器安装失败</string>
+  <string name="container_install_done">运行时已就绪</string>
+  <string name="container_install_failed">运行时安装失败</string>
   <string name="notif_log_copied">诊断日志已复制</string>
   <string name="notif_log_copied_detail">已复制 %1$s 行到剪贴板，请粘贴到问题反馈中</string>
 
@@ -38,9 +38,9 @@
   <string name="status_engine_starting">正在启动引擎…</string>
   <string name="status_engine_starting_detail">冷启动最长约一分钟，点击查看详情</string>
   <string name="status_engine_error_detail">点击查看详情</string>
-  <string name="status_container_installing">正在安装 Ubuntu 容器…</string>
-  <string name="status_container_installing_detail">一次性设置，约 35MB 下载</string>
-  <string name="status_container_init_failed">Ubuntu 容器初始化失败，请重试</string>
+  <string name="status_container_installing">正在准备运行时…</string>
+  <string name="status_container_installing_detail">一次性本地初始化</string>
+  <string name="status_container_init_failed">运行时初始化失败，请重试</string>
   <string name="status_ready_to_launch">一切就绪</string>
   <string name="status_ready_to_launch_detail">启动引擎以进入你的工作空间</string>
   <string name="status_extracting">正在解压运行时… %1$d MB</string>
@@ -56,22 +56,22 @@
 
   <!-- Runtime update (UpdateManager) -->
   <string name="update_checking">检查更新…</string>
-  <string name="update_downloading">下载快照（%1$d MB）…</string>
+  <string name="update_downloading">正在下载运行时（%1$d MB）…</string>
   <string name="update_verifying">校验…</string>
-  <string name="update_extracting">解压新快照…</string>
+  <string name="update_extracting">正在解压新运行时…</string>
   <string name="update_switching">切换运行时…</string>
   <string name="update_done">更新完成，引擎已自动重启</string>
   <string name="update_failed">更新失败：%1$s</string>
   <string name="err_manifest_https">manifest URL 必须为 HTTPS</string>
-  <string name="err_snapshot_url_https">快照下载 URL 必须为 HTTPS</string>
+  <string name="err_snapshot_url_https">运行时下载 URL 必须为 HTTPS</string>
   <string name="err_manifest_no_sha">manifest 缺少 sha256</string>
   <string name="err_sha_mismatch">SHA256 不匹配: %1$s</string>
-  <string name="err_new_snapshot_no_node">新快照缺少 node</string>
+  <string name="err_new_snapshot_no_node">新运行时缺少 node</string>
   <string name="err_old_runtime_switch">旧运行时切换失败</string>
-  <string name="err_switch_failed_rollback">切换失败且回滚失败（usr-old 保留）</string>
+  <string name="err_switch_failed_rollback">切换失败且回滚失败（rootfs-old 保留）</string>
   <string name="err_switch_failed_rolled_back">切换失败，已回滚</string>
   <string name="err_download_http">下载 HTTP %1$d</string>
-  <string name="err_snapshot_too_large">快照文件过大</string>
+  <string name="err_snapshot_too_large">运行时文件过大</string>
   <string name="err_manifest_http">manifest HTTP %1$d</string>
 
   <!-- Engine foreground service -->

@@ -6,14 +6,15 @@ import android.util.Log
 import java.io.File
 
 /**
- * Owns the embedded Termux environment snapshot: first-launch extraction into
- * filesDir/usr and the dsh engine process lifecycle (PATH/LD_LIBRARY_PATH/HOME
- * injected explicitly — the snapshot is self-sufficient, no Termux app needed).
+ * Owns the single embedded Debian glibc rootfs: first-launch extraction into
+ * filesDir/rootfs and the dsh engine process lifecycle. The engine (node +
+ * dsh) runs INSIDE the rootfs via proot — the agent shell and the engine
+ * share one container, no wrappers, no exec hooks.
  */
 class EngineManager(
   private val context: Context,
 ) {
-  val usrDir = File(context.filesDir, DshPaths.USR_DIR)
+  val rootfsDir = File(context.filesDir, DshPaths.ROOTFS_DIR)
   val homeDir = File(context.filesDir, "home")
 
   /**
@@ -29,35 +30,36 @@ class EngineManager(
           ?: File(context.filesDir, "dshdata-fallback")
       return File(publicDocs, "dshdata")
     }
-  val nodeBin = File(usrDir, DshPaths.NODE_BIN)
-  private val dshBin = File(usrDir, "lib/node_modules/@deepseek-ai/dsh/lib/bin.js")
+  private val prootRuntime by lazy { ProotRuntime(context) }
 
-  /** pty.node loading diagnostics + _Unwind_Resume provider resolution. */
-  private val unwindResolver by lazy {
-    UnwindResolver(context, usrDir, homeDir, nodeBin)
-  }
+  /** Engine entry binary inside the rootfs. */
+  private val dshEntry = File(rootfsDir, DshPaths.DSH_ENTRY)
 
-  val engineReady: Boolean get() = nodeBin.exists()
+  /** True once the rootfs is extracted and holds the dsh entry. */
+  val engineReady: Boolean get() = dshEntry.isFile
 
   /**
-   * Extract the bundled snapshot archive into filesDir. Runs on any thread;
+   * Extract the bundled rootfs archive into filesDir. Runs on any thread;
    * callers own the progress UI.
    * @param onProgress bytesDone, bytesTotal.
    * @returns true on success.
    */
-  fun extractSnapshot(onProgress: (Long, Long) -> Unit): Boolean =
+  fun extractRootfs(onProgress: (Long, Long) -> Unit): Boolean =
     try {
-      context.assets.openFd("snapshot.tar.xz").use { fd ->
-        AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + usrDir.parentFile)
-        SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
+      context.assets.openFd(DshPaths.ROOTFS_ASSET).use { fd ->
+        AppLog.log("extract", "archive size=" + fd.length + " bytes, dest=" + context.filesDir)
+        SnapshotExtractor.extract(
+          context.assets.open(DshPaths.ROOTFS_ASSET),
+          fd.length,
+          context.filesDir,
+          onProgress,
+        )
       }
       homeDir.mkdirs()
-      unwindResolver.diagnosePtyNode()
-      unwindResolver.probeInNodeIfPresent()
-      AppLog.log("extract", "done")
+      AppLog.log("extract", "done, engineReady=" + engineReady)
       true
     } catch (t: Throwable) {
-      Log.e(TAG, "snapshot extract failed", t)
+      Log.e(TAG, "rootfs extract failed", t)
       AppLog.log("extract", "FAILED", t)
       false
     }
@@ -93,7 +95,7 @@ class EngineManager(
    */
   fun ensureDshDataHome(): File {
     val dshData = dshDataDir
-    val privateDsh = File(homeDir, ".dsh")
+    val privateDsh = File(rootfsDir, DshPaths.CONTAINER_DSH_HOME)
     // Android < 11 has no All Files Access model and the public Documents
     // directory is unwritable (scoped storage); migration is impossible, so
     // keep DSH_HOME fully private. Observed on Android 10 (Huawei): the
@@ -267,59 +269,12 @@ class EngineManager(
     }
   }
 
-  /** Exec-reroute hook: bundled universal hook first, snapshot termux-exec as
-   *  fallback. Pair(hookPath, termuxExecEnv); null when no hook is usable. */
-  private fun execHook(): Pair<String, Map<String, String>>? {
-    // LD_PRELOAD: prefer the bundled universal exec-reroute hook (covers every
-    // SELinux domain and vendor, unlike the snapshot's termux-exec which only
-    // handles untrusted_app_25/27). Fall back to the snapshot hook when the
-    // bundled one is missing (should not happen on release builds).
-    val bundledHook = resolveBundledHook()
-    val snapshotHook = File(usrDir, "lib/libtermux-exec-ld-preload.so")
-    if (bundledHook != null) {
-      AppLog.log("engine", "using bundled exec hook: " + bundledHook.absolutePath)
-      return bundledHook.absolutePath to emptyMap()
-    }
-    AppLog.log("engine", "bundled exec hook missing, using snapshot termux-exec: " + snapshotHook.absolutePath)
-    if (!snapshotHook.exists()) {
-      Log.e(TAG, "engine start failed: no exec hook available at " + snapshotHook.absolutePath)
-      AppLog.log("engine", "start refused: no exec hook available")
-      return null
-    }
-    return snapshotHook.absolutePath to
-      mapOf(
-        "TERMUX_EXEC__SYSTEM_LINKER_EXEC__MODE" to "force",
-        "TERMUX_EXEC__EXECVE_CALL__INTERCEPT" to "1",
-      )
-  }
-
-  /** Path of the active exec hook (for the container smoke test); null = none. */
-  val execHookPath: String? get() = execHook()?.first
-
-  /** OPENSSL_CONF for the snapshot's own config (same env the engine uses). */
-  fun opensslConfEnv(): Map<String, String> = unwindResolver.opensslConfEnv()
-
-  /** Start the dsh web engine from the embedded snapshot. */
+  /** Start the dsh web engine inside the single runtime rootfs. */
   fun startEngine(port: Int = 3080): Boolean {
-    val hook = execHook()
-    if (hook == null) return false
-    val preloadPath = hook.first
-    val termuxExecEnv = hook.second
-    // Executability diagnostics: an exec EACCES on the engine binary is the
-    // #1 cause of "engine start timeout". Record the actual permission bits.
-    AppLog.log(
-      "engine",
-      "node.canExecute=" + nodeBin.canExecute() +
-        " hook.canExecute=" + File(preloadPath).canExecute() +
-        " node.length=" + nodeBin.length() + " usr=" + usrDir.canRead() + "/" + usrDir.canExecute(),
-    )
-    // Proot container runtime: extract proot + deps and install the bash
-    // wrapper (an ELF, rerouted through linker64 by the exec-hook) routing
-    // agent shell commands into the Ubuntu container. Idempotent — cheap when
-    // already in place.
-    val wrapperWorkspace = File(ensureDshDataHome(), "workspace").apply { mkdirs() }
-    ProotRuntime(context, usrDir, wrapperWorkspace)
-      .ensureWrapper()
+    if (!prootRuntime.ensureProot()) {
+      AppLog.log("engine", "start refused: proot runtime unavailable")
+      return false
+    }
     val now = System.currentTimeMillis()
     // Process-level CAS: only one concurrent caller actually starts the engine
     // (device-observed EADDRINUSE on double start).
@@ -351,66 +306,8 @@ class EngineManager(
     }
     EngineManager.engineProcess = null
     return try {
-      val args =
-        arrayOf(
-          nodeBin.absolutePath,
-          "--expose-internals",
-          dshBin.absolutePath,
-          "web",
-          "--port",
-          port.toString(),
-        )
-      // LD_PRELOAD: the exec-reroute hook plus (when found) the system library
-      // that provides _Unwind_Resume for native modules like node-pty. Every
-      // process loaded via linker64 inherits it, so child execs are rerouted
-      // across the whole engine tree. The snapshot's termux-exec variant
-      // additionally needs the TERMUX_EXEC__* env (see termuxExecEnv above).
-      val ptyNode =
-        File(
-          usrDir,
-          DshPaths.PTY_NODE,
-        )
-      val unwind = if (ptyNode.isFile) unwindResolver.resolveIfNeeded(ptyNode) else null
-      val preloadValue = if (unwind != null) preloadPath + ":" + unwind else preloadPath
-      if (unwind != null) {
-        AppLog.log("engine", "LD_PRELOAD += " + unwind)
-      }
-      val env =
-        mapOf(
-          "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
-          "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
-          "HOME" to homeDir.absolutePath,
-          // DSH_HOME stays in the private domain (public FUSE forbids symlinks,
-          // so the profiles/node_modules flat fallback cannot live there); user
-          // data is routed to public Documents/dshdata via migration + symlinks
-          // and plugin configs (see ensureDshDataHome).
-          "DSH_HOME" to ensureDshDataHome().absolutePath,
-          // OPENSSL_CONF: the snapshot's openssl library has the Termux build
-          // path (/data/data/com.termux/files/usr/etc/tls) compiled in, which is
-          // unreadable from this package — node aborts at startup when it cannot
-          // load the config (observed exit code 13). Point it at the config file
-          // shipped inside our own tree when present; otherwise leave it unset
-          // (OpenSSL tolerates a missing default config, not a broken OPENSSL_CONF).
-          // os.tmpdir() falls back to the baked-in Termux tmp on Android
-          // (unwritable from the app domain); keep spill inside filesDir.
-          "TMPDIR" to File(homeDir, "tmp").apply { mkdirs() }.absolutePath,
-          // The bash wrapper ELF resolves every dsh path from these (it is
-          // loaded via linker64, so it cannot locate itself); the workspace
-          // is mounted at /root/projects inside the container.
-          "DSH_FILES_DIR" to context.filesDir.absolutePath,
-          "DSH_WORKSPACE" to wrapperWorkspace.absolutePath,
-          "LD_PRELOAD" to preloadValue,
-          "TERMUX__ROOTFS" to usrDir.parentFile.absolutePath,
-          "TERMUX__PREFIX" to usrDir.absolutePath,
-          "TERMUX_APP__DATA_DIR" to context.filesDir.parentFile.absolutePath,
-          "TERMUX_APP__LEGACY_DATA_DIR" to context.filesDir.parentFile.absolutePath,
-          "TERMUX_VERSION" to "0.118.3",
-          // Auth token for the directory-pick bridge endpoint (validated by the
-          // web-compat plugin as x-dsh-pick-token). Process-level singleton so a
-          // watchdog-restarted engine (separate EngineManager instance) keeps the
-          // same token the WebView bridge holds — otherwise picks break silently.
-          "DSH_PICK_TOKEN" to pickToken,
-        ) + unwindResolver.opensslConfEnv() + termuxExecEnv
+      val projectsDir = File(ensureDshDataHome(), DshPaths.PROJECTS_DIR).apply { mkdirs() }
+      val (args, env) = prootRuntime.buildEngineArgs(rootfsDir, projectsDir, port, pickToken)
       engineProcess = startWithArgs(args, env)
       // The cooldown is only set after a real start; a failed path does not
       // consume the window so a retry can happen immediately.
@@ -418,7 +315,8 @@ class EngineManager(
       AppLog.log(
         "engine",
         "started port=" + port +
-          " node=" + nodeBin.absolutePath + " arch=" +
+          " proot=" + prootRuntime.prootBin.absolutePath +
+          " rootfs=" + rootfsDir.absolutePath + " arch=" +
           android.os.Build.SUPPORTED_ABIS
             .joinToString(","),
       )
@@ -435,9 +333,9 @@ class EngineManager(
 
   /**
    * Spawn the engine, falling back to the system linker when the direct exec
-   * is denied: Android 15+ apps targeting SDK 35+ may not exec app-data ELF
-   * binaries, but loading them through /system/bin/linker64 is the same
-   * mechanism as native libraries (always permitted for app data).
+   * is denied. proot is NDK/bionic-linked, so /system/bin/linker64 can load
+   * it; the rootfs's glibc binaries are never exec'd from app data (they run
+   * under proot inside the container).
    */
   private fun startWithArgs(
     args: Array<String>,
@@ -458,47 +356,6 @@ class EngineManager(
       Log.w(TAG, "direct exec denied, falling back to linker64: " + e.message)
       AppLog.log("engine", "direct exec denied (" + e.message + "), falling back to linker64")
       build(listOf("/system/bin/linker64") + args.toList()).start()
-    }
-  }
-
-  /**
-   * Locate the bundled exec-reroute hook (libexec-hook.so). The NDK library
-   * ships in APK lib/<abi>/; with extractNativeLibs=false (AGP default) the
-   * installer does NOT extract it, so nativeLibraryDir has no real file —
-   * fall back to extracting it from the APK into filesDir.
-   */
-  private fun resolveBundledHook(): File? {
-    val native = File(context.applicationInfo.nativeLibraryDir, "libexec-hook.so")
-    if (native.isFile) return native
-    val target = File(context.filesDir, "libexec-hook.so")
-    // Reuse an already-extracted hook: it exists on every run after the
-    // first, and its write bit was stripped (W^X policy) — overwriting it
-    // would fail with EACCES on reinstall-without-data-clear.
-    if (target.isFile && target.length() > 0L) return target
-    return try {
-      val abi =
-        when {
-          android.os.Build.SUPPORTED_ABIS
-            .any { it.startsWith("arm64") } -> "arm64-v8a"
-
-          android.os.Build.SUPPORTED_ABIS
-            .any { it.startsWith("x86_64") } -> "x86_64"
-
-          else -> null
-        } ?: return null
-      java.util.zip.ZipFile(context.applicationInfo.sourceDir).use { zip ->
-        val entry = zip.getEntry("lib/$abi/libexec-hook.so") ?: return null
-        zip.getInputStream(entry).use { input ->
-          target.outputStream().use { out -> input.copyTo(out) }
-        }
-      }
-      target.setExecutable(true, true)
-      target.setWritable(false, false) // W^X: preload libs must not be writable
-      AppLog.log("engine", "extracted bundled exec hook from APK -> " + target.absolutePath)
-      target
-    } catch (t: Throwable) {
-      AppLog.log("engine", "APK hook extraction failed", t)
-      null
     }
   }
 

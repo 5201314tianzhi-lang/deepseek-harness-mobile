@@ -18,12 +18,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 /**
  * Engine process governance: process-level pickToken singleton, companion
- * state reset, stopEngine destroy semantics and the hung-process kill path
- * in startEngine.
+ * state reset, stopEngine destroy semantics, the hung-process kill path in
+ * startEngine, and single-runtime readiness/start gating.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -51,14 +50,23 @@ class EngineManagerTest {
   }
 
   @Test
-  fun `engineReady reflects snapshot presence`() {
+  fun `engineReady reflects rootfs presence`() {
     val manager = EngineManager(context)
     assertFalse(manager.engineReady)
-    File(context.filesDir, DshPaths.USR_DIR + "/" + DshPaths.NODE_BIN).apply {
+    File(context.filesDir, DshPaths.ROOTFS_DIR + "/" + DshPaths.DSH_ENTRY).apply {
       parentFile!!.mkdirs()
-      writeText("node")
+      writeText("bin.js")
     }
     assertTrue(manager.engineReady)
+  }
+
+  @Test
+  fun `startEngine fails without proot assets`() {
+    // Robolectric has no proot assets and no extracted proot runtime, so
+    // ensureProot fails and the engine start is refused before any spawn.
+    val manager = EngineManager(context)
+    assertFalse(manager.startEngine())
+    assertNull(EngineManager.engineProcess)
   }
 
   @Test
@@ -94,19 +102,18 @@ class EngineManagerTest {
     EngineManager.engineProcess = hung
     // Cooldown long expired (last attempt a day ago) -> the process is hung.
     EngineManager.lastStartAttemptAt = System.currentTimeMillis() - 24 * 3600 * 1000L
-
-    // startEngine needs the exec hook; make the hook resolvable by stubbing
-    // nativeLibraryDir with a fake hook file.
-    val hook = File(context.filesDir, "libexec-hook.so")
-    hook.writeText("stub")
-    // execHook() reads applicationInfo.nativeLibraryDir first — point it at a
-    // non-existent dir so it falls back to filesDir/libexec-hook.so.
-    val appInfo = context.applicationInfo
-    appInfo.nativeLibraryDir = File(context.filesDir, "no-such-native").absolutePath
+    // Seed the proot runtime so startEngine passes the gate and reaches the
+    // hung-process kill path before failing on the missing rootfs.
+    File(context.filesDir, "proot/proot").apply {
+      parentFile!!.mkdirs()
+      writeText("stub")
+    }
+    File(context.filesDir, "proot/libtalloc.so.2").writeText("stub")
+    File(context.filesDir, "proot/libandroid-shmem.so").writeText("stub")
 
     val result = EngineManager(context).startEngine()
 
-    // The engine start itself fails later (node missing) — the important
+    // The engine start itself fails later (rootfs missing) — the important
     // part is the hung process got destroyed before that.
     assertFalse(result)
     verify { hung.destroyForcibly() }
@@ -115,11 +122,6 @@ class EngineManagerTest {
 
   @Test
   fun `concurrent starts are single-flighted`() {
-    // Make the exec hook resolvable so startEngine gets past the gate.
-    File(context.filesDir, "libexec-hook.so").writeText("stub")
-    val appInfo = context.applicationInfo
-    appInfo.nativeLibraryDir = File(context.filesDir, "no-such-native").absolutePath
-    val first = EngineManager(context)
     val second = EngineManager(context)
     // Both try to acquire the CAS; only one can hold it at a time.
     assertTrue(EngineManager.STARTING.compareAndSet(false, true))
