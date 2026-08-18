@@ -331,8 +331,8 @@ class MainActivity : ComponentActivity() {
           return@Thread
         }
         val projectsDir = File(engineManager.ensureDshDataHome(), DshPaths.PROJECTS_DIR)
-        val probe = ContainerProbe(prootRuntime, rootfsDir, projectsDir, EngineManager.pickToken)
-        val smoke = probe.smokeTest()
+        val containerProbe = ContainerProbe(prootRuntime, rootfsDir, projectsDir, EngineManager.pickToken)
+        val smoke = containerProbe.smokeTest()
         if (smoke != null) {
           AppLog.log("boot", "container init FAILED: " + smoke)
           runOnUiThread {
