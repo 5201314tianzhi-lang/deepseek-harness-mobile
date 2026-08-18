@@ -36,10 +36,11 @@ jobs:
           api-level: 34
           arch: arm64-v8a
           target: google_apis
-          boot-timeout: 1800000
+          emulator-boot-timeout: 1800
           ram-size: 4096M
           cores: 4
           disable-animations: true
+          emulator-options: -accel off -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             adb install -r dist/app.apk
             adb shell am start -W -n com.dshmobile.shell/.MainActivity
