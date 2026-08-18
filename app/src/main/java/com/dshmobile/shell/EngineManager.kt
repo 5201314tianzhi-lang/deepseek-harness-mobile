@@ -122,11 +122,12 @@ class EngineManager(
         relink(File(privateDsh, "sessions"), File(dshData, "sessions"))
         relink(File(privateDsh, "storages"), File(dshData, "storages"))
         relink(File(privateDsh, "attachments"), File(dshData, "attachments"))
-        for (profile in listOf("web", "headless")) {
-          for (name in listOf("cordis.yml", "cordis.patch.yml")) {
-            relinkFile(File(privateDsh, "profiles/$profile/$name"), File(dshData, "profiles/$profile/$name"))
-          }
-        }
+        // profile yml files MUST stay as real files inside the rootfs: node
+        // rewrites cordis.yml on every boot (prepareProfile), and a symlink
+        // pointing at the HOST absolute path (/storage/emulated/0/...) cannot be
+        // resolved inside the proot container -> ENOENT, engine exits 1. So
+        // instead of re-linking to the public copy, restore a local real file.
+        restoreProfilesLocal(privateDsh, dshData)
       } else {
         try {
           dshData.mkdirs()
@@ -136,26 +137,12 @@ class EngineManager(
           relocateDir(File(privateDsh, "sessions"), File(dshData, "sessions"))
           relocateDir(File(privateDsh, "storages"), File(dshData, "storages"))
           relocateDir(File(privateDsh, "attachments"), File(dshData, "attachments"))
-          // 3) plugin configs: copy to public + replace private with a symlink (dsh only reads)
-          for (profile in listOf("web", "headless")) {
-            for (name in listOf("cordis.yml", "cordis.patch.yml")) {
-              val sf = File(privateDsh, "profiles/$profile/$name")
-              if (sf.exists() && sf.isFile) {
-                val pf = File(dshData, "profiles/$profile/$name")
-                pf.parentFile?.mkdirs()
-                sf.copyTo(pf, overwrite = true)
-                sf.delete()
-                try {
-                  java.nio.file.Files
-                    .createSymbolicLink(sf.toPath(), pf.toPath())
-                } catch (t: Throwable) {
-                  // Symlink failed (edge case): keep the private entity, discard the public copy.
-                  pf.delete()
-                  Log.w(TAG, "symlink failed for " + sf.absolutePath + "; keeping private copy")
-                }
-              }
-            }
-          }
+          // 3) plugin configs: intentionally NOT migrated. node rewrites
+          //    cordis.yml every boot (prepareProfile); a host-absolute symlink
+          //    can't be resolved inside the proot container (ENOENT). Keep the
+          //    profile dir as real files in the rootfs; if a public backup
+          //    exists it is harmless but we still keep the local real file.
+          restoreProfilesLocal(privateDsh, dshData)
           marker.writeText(privateDsh.absolutePath)
           Log.i(TAG, "dshdata migration done -> " + dshData.absolutePath)
         } catch (t: Throwable) {
@@ -169,6 +156,46 @@ class EngineManager(
     return privateDsh
   }
 
+  /**
+   * Ensure the container's `profiles/{web,headless}/cordis.yml` (and
+   * cordis.patch.yml) exist as REAL files inside the rootfs (under DSH_HOME),
+   * never as symlinks pointing at the HOST absolute public path.
+   *
+   * Why: node's prepareProfile() rewrites cordis.yml on every boot. If the file
+   * is a symlink to /storage/emulated/0/Documents/dshdata/... that path cannot
+   * be resolved inside the proot container (container root is the rootfs), so
+   * the write fails with ENOENT and the engine exits 1 (observed). Restoring a
+   * real file reproduces the "first boot" state where the engine runs fine.
+   * A public backup (if any) is copied back so prior settings survive.
+   */
+  private fun restoreProfilesLocal(
+    privateDsh: File,
+    dshData: File,
+  ) {
+    for (profile in listOf("web", "headless")) {
+      val dir = File(privateDsh, "profiles/$profile")
+      dir.mkdirs()
+      for (name in listOf("cordis.yml", "cordis.patch.yml")) {
+        val sf = File(dir, name)
+        val pf = File(dshData, "profiles/$profile/$name")
+        if (java.nio.file.Files.isSymbolicLink(sf.toPath())) {
+          // Replace the dangling host-absolute symlink with a real local file.
+          sf.delete()
+          if (pf.isFile) {
+            try {
+              sf.createNewFile()
+              pf.copyTo(sf, overwrite = true)
+            } catch (t: Throwable) {
+              Log.w(TAG, "restore " + sf.absolutePath + " from public failed", t)
+            }
+          }
+        } else if (!sf.isFile) {
+          // Fresh boot with no profile yet: leave it absent — node generates it.
+          if (pf.isFile) pf.copyTo(sf, overwrite = true)
+        }
+      }
+    }
+  }
   /**
    * Re-link (I-10): when the public target exists, ensure the private item is
    * a symlink pointing at it. Already-correct symlink → no-op; private real
@@ -202,31 +229,6 @@ class EngineManager(
         .createSymbolicLink(srcPath, dst.toPath())
     } catch (t: Throwable) {
       Log.w(TAG, "relink failed for " + src.absolutePath, t)
-    }
-  }
-
-  /** Re-link (I-10), file variant: when the public target exists, replace the
-   *  private file with a symlink pointing at it. */
-  private fun relinkFile(
-    src: File,
-    dst: File,
-  ) {
-    if (!dst.isFile) return
-    val srcPath = src.toPath()
-    if (java.nio.file.Files
-        .isSymbolicLink(srcPath)
-    ) {
-      if (src.canonicalPath == dst.canonicalPath) return
-      src.delete()
-    } else if (src.exists()) {
-      src.delete()
-    }
-    src.parentFile?.mkdirs()
-    try {
-      java.nio.file.Files
-        .createSymbolicLink(srcPath, dst.toPath())
-    } catch (t: Throwable) {
-      Log.w(TAG, "relinkFile failed for " + src.absolutePath, t)
     }
   }
 
