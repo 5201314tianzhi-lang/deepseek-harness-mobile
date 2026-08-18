@@ -29,16 +29,38 @@ class ProotRuntime(
     return f
   }
 
-  /** proot 与依赖已由系统装载器就位在 nativeLibraryDir（jniLibs）。 */
+  /** proot 与依赖已由系统装载器就位在 nativeLibraryDir（jniLibs）。
+   *
+   * libtalloc 的 SONAME 是 libtalloc.so.2，但带版本号的文件名在 jniLibs 下
+   * 会被 AGP 当作非标准原生库而漏打包（lib/ 里只剩 libproot.so +
+   * libandroid-shmem.so，运行时 ensureProot 因 libtalloc.so.2 缺失而失败）。
+   * 因此 jniLibs 以标准命名 libtalloc.so 打进 lib/，这里在启动前把它镜像为
+   * filesDir/libtalloc.so.2（proot 的 linker 按 soname 查找的名字），并把
+   * filesDir 加入 LD_LIBRARY_PATH，使 proot exec 时能解析到它。
+   */
   fun ensureProot(): Boolean {
-    val talloc = File(nativeLibDir, "libtalloc.so.2")
     val shmem = File(nativeLibDir, "libandroid-shmem.so")
-    val ok = prootBin.isFile && prootBin.length() > 0L
-    val tallocOk = talloc.isFile && talloc.length() > 0L
+    val ok = prootBin.isFile && probinUsable(prootBin)
     val shmemOk = shmem.isFile && shmem.length() > 0L
+    // Mirror libtalloc.so (packed standard-name) to filesDir/libtalloc.so.2
+    // (the soname proot's linker actually resolves).
+    val tallocSrc = File(nativeLibDir, "libtalloc.so")
+    val talloc = File(context.filesDir, "libtalloc.so.2")
+    var tallocOk = talloc.isFile && talloc.length() > 0L
+    if (!tallocOk && tallocSrc.isFile) {
+      try {
+        tallocSrc.copyTo(talloc, overwrite = true)
+        tallocOk = talloc.isFile && talloc.length() > 0L
+      } catch (_: Throwable) {
+        tallocOk = false
+      }
+    }
     AppLog.log("proot", "ensureProot(nativeLibraryDir) proot=$ok talloc=$tallocOk shmem=$shmemOk dir=" + nativeLibDir.absolutePath)
     return ok && tallocOk && shmemOk
   }
+
+  /** proot 二进制需可被系统 linker 执行加载。 */
+  private fun probinUsable(f: File): Boolean = f.isFile && f.length() > 0L
 
   /**
    * 构建引擎 argv + env：proot + 单一 rootfs，容器内启动 node 引擎。
@@ -86,7 +108,12 @@ class ProotRuntime(
         "--port",
         port.toString(),
       )
-    val env = mapOf("LD_LIBRARY_PATH" to nativeLibDir.absolutePath)
+    // LD_LIBRARY_PATH spans both nativeLibraryDir (libproot.so + shmem + the
+    // standard-named libtalloc.so) and filesDir (where libtalloc.so.2 is
+    // mirrored) so proot's Android linker can resolve all its DT_NEEDED by
+    // soname at exec time.
+    val libPath = nativeLibDir.absolutePath + ":" + context.filesDir.absolutePath
+    val env = mapOf("LD_LIBRARY_PATH" to libPath)
     return args to env
   }
 }

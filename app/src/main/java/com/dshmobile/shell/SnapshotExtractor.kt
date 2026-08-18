@@ -184,18 +184,28 @@ object SnapshotExtractor {
    * Resolve a tar entry name against the extraction root, rejecting any
    * traversal (`..`) or absolute path that would escape dest. Throws on
    * violation: an untrusted snapshot must never write outside its root.
+   *
+   * NOTE: this uses LEXICAL normalization (Path.normalize) — NOT
+   * canonicalPath. canonicalPath resolves existing symlinks: once we extract a
+   * symlink whose target is an absolute path (debian alternatives, e.g.
+   * /etc/alternatives/pager -> /usr/bin/pager), the path stays inside the
+   * rootfs, but a later canonicalPath() on that very symlink resolves to the
+   * host-side path (outside dest) and is wrongly rejected as "escapes
+   * extraction root". That made every retry fail identically with no recovery.
+   * Lexical normalization only resolves "." / ".." and never follows symlinks,
+   * so it is safe for tar entries that are themselves symlinks.
    */
   private fun resolveTarget(
     dest: File,
     destCanonical: String,
     name: String,
   ): File {
-    val raw = File(dest, name)
-    val canonical = raw.canonicalPath
-    if (canonical != destCanonical && !canonical.startsWith(destCanonical + File.separator)) {
+    val rootPath = dest.toPath().toAbsolutePath().normalize().toString()
+    val targetPath = dest.toPath().resolve(name).normalize().toString()
+    if (targetPath != rootPath && !targetPath.startsWith(rootPath + File.separator)) {
       throw java.io.IOException("tar entry escapes extraction root: " + name)
     }
-    return raw
+    return File(dest, name)
   }
 
   /** Stamp the Android exec attribute on all extracted executables. */
