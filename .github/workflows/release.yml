@@ -15,45 +15,9 @@ permissions:
   contents: write
 
 jobs:
-  diagnose-snapshot:
-    name: Diagnose snapshot file modes
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download arm64 snapshot
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/tags/v0.10.4 \
-            --jq '.assets[] | select(.name == "snapshot-arm64.tar.xz") | .url')
-          curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
-            "$asset_url" -o snapshot.tar.xz
-      - name: Inspect key file modes
-        run: |
-          python3 - <<'EOF'
-          import tarfile
-          t = tarfile.open('snapshot.tar.xz', 'r:xz')
-          wanted = ('usr/bin/node', 'usr/bin/bash', 'usr/lib/libtermux-exec-ld-preload.so')
-          for m in t.getmembers():
-              if m.name.endswith(wanted) or 'bin.js' in m.name:
-                  print(f"{m.name}: mode={oct(m.mode)} size={m.size}")
-          for cand in ('usr/etc/tls/openssl.cnf', 'usr/etc/ssl/openssl.cnf', 'usr/etc/tls/openssl.cnf.dist'):
-              hit = [m for m in t.getmembers() if m.name == cand]
-              print(cand, "->", "FOUND mode=" + oct(hit[0].mode) if hit else "missing")
-          total = sum(m.size for m in t.getmembers())
-          print("entries:", len(t.getmembers()), "total bytes:", total)
-          EOF
-
   build:
-    name: Build (${{ matrix.abi }})
+    name: Build (arm64-v8a)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - abi: arm64-v8a
-            snapshot_asset: snapshot-arm64.tar.xz
-          - abi: x86_64
-            snapshot_asset: snapshot-x86_64.tar.xz
     steps:
       - uses: actions/checkout@v7
 
@@ -66,7 +30,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4.0.1
         with:
-          packages: 'platforms;android-36 platform-tools build-tools;36.0.0 ndk;27.2.12479018'
+          packages: 'platforms;android-36 platform-tools build-tools;36.0.0'
           accept-android-sdk-licenses: 'true'
 
       - name: Set up Gradle
@@ -87,17 +51,17 @@ jobs:
           echo "version_name=$VER" >> "$GITHUB_OUTPUT"
           echo "version_code=$CODE" >> "$GITHUB_OUTPUT"
 
-      - name: Download runtime snapshot (${{ matrix.abi }}) from upstream releases
+      - name: Download single-runtime rootfs (arm64) from dsh-arm64 releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p app/src/main/assets
-          asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/tags/v0.10.4 \
-            --jq '.assets[] | select(.name == "${{ matrix.snapshot_asset }}") | .url')
-          [ -n "$asset_url" ] || { echo "${{ matrix.snapshot_asset }} not found upstream"; exit 1; }
+          asset_url=$(gh api repos/dsh-io/dsh-arm64/releases/latest \
+            --jq '.assets[] | select(.name | startswith("dsh-arm64-rootfs-")) | .url' | head -1)
+          [ -n "$asset_url" ] || { echo "rootfs asset not found in dsh-arm64 latest release"; exit 1; }
           curl -sfL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
-            "$asset_url" -o app/src/main/assets/snapshot.tar.xz
-          ls -lh app/src/main/assets/snapshot.tar.xz
+            "$asset_url" -o app/src/main/assets/rootfs.tar.xz
+          ls -lh app/src/main/assets/rootfs.tar.xz
 
       - name: Get CI signing key
         env:
@@ -116,15 +80,11 @@ jobs:
             || { echo "keystore secret is not valid (alias 'release', storepass 'android')" >&2; exit 1; }
           ls -la release.keystore
 
-      - name: Package proot runtime (${{ matrix.abi }})
+      - name: Package proot runtime (arm64)
         run: |
           # Termux proot + libtalloc + libandroid-shmem debs, unpacked into
-          # APK assets. Zero compilation: same build ecosystem as the snapshot.
-          if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
-            ABI=aarch64
-          else
-            ABI=x86_64
-          fi
+          # APK assets. Zero compilation: same build ecosystem as the rootfs.
+          ABI=aarch64
           BASE="https://packages.termux.dev/apt/termux-main/pool/main"
           mkdir -p /tmp/proot && cd /tmp/proot
           curl -sfL -o proot.deb "$BASE/p/proot/proot_5.1.107.91_${ABI}.deb"
@@ -138,85 +98,8 @@ jobs:
           ls -la proot libtalloc.so.2 libandroid-shmem.so
           file proot | grep -q ELF || { echo "proot not ELF"; exit 1; }
           readelf --dyn-syms proot | grep -q talloc || { echo "proot missing talloc ref"; exit 1; }
-          mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/proot/${{ matrix.abi }}"
-          cp proot libtalloc.so.2 libandroid-shmem.so "$GITHUB_WORKSPACE/app/src/main/assets/proot/${{ matrix.abi }}/"
-
-      - name: Package unwind patch lib (${{ matrix.abi }})
-        run: |
-          # The snapshot's C++ runtime (libc++_shared.so) does not export
-          # _Unwind_Resume (Termux links libunwind statically into each
-          # binary), so dlopen of native modules like node-pty fails. Bundle
-          # the snapshot's own libunwind.a into a shared lib (archive link,
-          # no source) and LD_PRELOAD it to supply the missing symbol.
-          mkdir -p /tmp/unwind && cd /tmp/unwind
-          tar -xJf "$GITHUB_WORKSPACE/app/src/main/assets/snapshot.tar.xz" usr/lib/libunwind.a 2>/dev/null || { echo "libunwind.a not in snapshot"; exit 1; }
-          # Termux compiles libunwind with -fvisibility=hidden (GLOBAL HIDDEN
-          # symbols are not exported by the linker), so force the _Unwind_*
-          # definitions to default visibility by patching st_other in the
-          # archive members' ELF symbol tables (no binutils version needed).
-          python3 - <<'PYEOF'
-          import struct, sys
-          def patch(path, out):
-              data = bytearray(open(path, 'rb').read())
-              if not data.startswith(b'!<arch>\n'):
-                  sys.exit('not an ar archive')
-              pos = 8
-              changed = []
-              while pos + 60 <= len(data):
-                  hdr = bytes(data[pos:pos + 60])
-                  size = int(hdr[48:58].decode().rstrip(), 10)
-                  start = pos + 60
-                  if len(data) >= start + 64 and data[start:start + 4] == b'\x7fELF':
-                      e_shoff = struct.unpack_from('<Q', data, start + 40)[0]
-                      e_shentsize = struct.unpack_from('<H', data, start + 58)[0]
-                      e_shnum = struct.unpack_from('<H', data, start + 60)[0]
-                      symtab_off = symtab_size = strtab_idx = None
-                      for i in range(e_shnum):
-                          off = start + e_shoff + i * e_shentsize
-                          shtype = struct.unpack_from('<I', data, off + 4)[0]
-                          if shtype == 2:
-                              symtab_off = struct.unpack_from('<Q', data, off + 24)[0]
-                              symtab_size = struct.unpack_from('<Q', data, off + 32)[0]
-                              strtab_idx = struct.unpack_from('<I', data, off + 40)[0]
-                      if symtab_off is not None and strtab_idx is not None:
-                          soff = start + e_shoff + strtab_idx * e_shentsize
-                          strtab_off = struct.unpack_from('<Q', data, soff + 24)[0]
-                          strtab_size = struct.unpack_from('<Q', data, soff + 32)[0]
-                          for k in range(symtab_size // 24):
-                              so = start + symtab_off + k * 24
-                              st_name = struct.unpack_from('<I', data, so)[0]
-                              st_other = data[so + 5]
-                              bind = data[so + 4] >> 4
-                              if st_other and bind == 1:
-                                  end = data.find(b'\0', start + strtab_off + st_name, start + strtab_off + strtab_size)
-                                  name = bytes(data[start + strtab_off + st_name:end]).decode('latin1')
-                                  if name.startswith('_Unwind'):
-                                      data[so + 5] = 0
-                                      changed.append(name)
-                  pos = start + size + (size % 2)
-              open(out, 'wb').write(bytes(data))
-              uniq = sorted(set(changed))
-              print('patched to default visibility:', ', '.join(uniq))
-              if not uniq:
-                  sys.exit('no _Unwind symbols patched')
-          patch('usr/lib/libunwind.a', 'usr/lib/libunwind-export.a')
-          PYEOF
-          export NDK_TOOLCHAIN="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64"
-          if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
-            TRIPLE=aarch64-linux-android26
-          else
-            TRIPLE=x86_64-linux-android26
-          fi
-          "$NDK_TOOLCHAIN/bin/$TRIPLE-clang" -shared -fPIC \
-            -Wl,--whole-archive usr/lib/libunwind-export.a -Wl,--no-whole-archive \
-            -o libunwind-patch.so
-          readelf --dyn-syms libunwind-patch.so | grep -q "_Unwind_Resume" \
-            && echo "OK: _Unwind_Resume exported" \
-            || { echo "FAIL: _Unwind_Resume not exported"; exit 1; }
-          readelf -d libunwind-patch.so | grep NEEDED || true
-          mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/unwind"
-          cp libunwind-patch.so "$GITHUB_WORKSPACE/app/src/main/assets/unwind/libunwind-patch-${{ matrix.abi }}.so"
-          ls -la "$GITHUB_WORKSPACE/app/src/main/assets/unwind/"
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/proot/arm64-v8a"
+          cp proot libtalloc.so.2 libandroid-shmem.so "$GITHUB_WORKSPACE/app/src/main/assets/proot/arm64-v8a/"
 
       - name: Run JVM unit tests
         run: |
@@ -236,17 +119,17 @@ jobs:
           ./gradlew assembleRelease \
             -PversionName="${{ steps.tag.outputs.version_name }}" \
             -PversionCode=${{ steps.tag.outputs.version_code }} \
-            -PabiFilter=${{ matrix.abi }}
+            -PabiFilter=arm64-v8a
 
       - name: Rename APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk "dist/dsh-apk-${{ steps.tag.outputs.tag }}-${{ matrix.abi }}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/dsh-apk-${{ steps.tag.outputs.tag }}.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: apk-${{ matrix.abi }}
+          name: apk-arm64-v8a
           path: dist/
 
   publish:
@@ -277,6 +160,5 @@ jobs:
           overwrite_files: true
           body: |
             DeepSeek Harness Android shell APK ${{ steps.tag.outputs.tag }}
-            - arm64-v8a: for ARM64 phones/tablets
-            - x86_64: for x86_64 emulators (MuMu, LDPlayer, etc.)
+            - arm64-v8a only: single embedded Debian rootfs runtime
           files: dist/*.apk

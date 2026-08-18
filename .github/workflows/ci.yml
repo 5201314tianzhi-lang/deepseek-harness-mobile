@@ -30,17 +30,17 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6.3.0
 
-      - name: Download runtime snapshot (arm64) from upstream releases
+      - name: Download single-runtime rootfs (arm64) from dsh-arm64 releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p app/src/main/assets
-          asset_url=$(gh api repos/kelai141/dsh-mobile-apk/releases/tags/v0.10.4 \
-            --jq '.assets[] | select(.name == "snapshot-arm64.tar.xz") | .url')
-          [ -n "$asset_url" ] || { echo "snapshot-arm64.tar.xz not found upstream"; exit 1; }
+          asset_url=$(gh api repos/dsh-io/dsh-arm64/releases/latest \
+            --jq '.assets[] | select(.name | startswith("dsh-arm64-rootfs-")) | .url' | head -1)
+          [ -n "$asset_url" ] || { echo "rootfs asset not found in dsh-arm64 latest release"; exit 1; }
           curl -sfL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
-            "$asset_url" -o app/src/main/assets/snapshot.tar.xz
-          ls -lh app/src/main/assets/snapshot.tar.xz
+            "$asset_url" -o app/src/main/assets/rootfs.tar.xz
+          ls -lh app/src/main/assets/rootfs.tar.xz
 
       - name: Quality gate
         run: |

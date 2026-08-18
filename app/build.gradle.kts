@@ -26,25 +26,15 @@ android {
     // e.g. v0.1.0 -> 0.1.0 / 100); local builds keep the defaults.
     versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
     versionName = (project.findProperty("versionName") as String?) ?: "0.1.0"
-    // One ABI per CI matrix leg (-PabiFilter=arm64-v8a); local builds keep
-    // all ABIs so the universal libexec-hook.so works everywhere.
-    val abiFilter = project.findProperty("abiFilter") as String?
-    if (abiFilter != null) {
-      ndk { abiFilters += abiFilter }
-    }
+    // Single runtime: arm64-v8a only. CI passes -PabiFilter=arm64-v8a;
+    // local builds are locked to arm64-v8a as well (x86_64 was dropped with
+    // the Termux snapshot runtime).
+    ndk { abiFilters += "arm64-v8a" }
   }
 
   androidResources {
-    // snapshot.tar.xz is already xz-compressed; double-compressing it breaks openFd.
+    // rootfs.tar.xz is already xz-compressed; double-compressing it breaks openFd.
     noCompress += "xz"
-  }
-
-  // Universal exec reroute hook (src/main/cpp): built for both ABIs and
-  // shipped as libexec-hook.so, LD_PRELOADed into the engine process tree.
-  externalNativeBuild {
-    cmake {
-      path = file("src/main/cpp/CMakeLists.txt")
-    }
   }
 
   // CI signing: the release workflow drops a release.keystore at the project
@@ -116,19 +106,20 @@ tasks.register<JacocoReport>("jacocoTestReport") {
   )
 }
 
-// The runtime snapshot ships from GitHub Releases (the large file is not in
-// the repo); fail the build with fetch instructions when it is missing.
+// The single-runtime rootfs ships from dsh-io/dsh-arm64 releases (the large
+// file is not in the repo); fail the build with fetch instructions when it
+// is missing.
 tasks.whenTaskAdded {
   if (name == "mergeDebugAssets" || name == "mergeReleaseAssets") {
     doFirst {
-      val snap = file("src/main/assets/snapshot.tar.xz")
-      if (!snap.exists()) {
+      val rootfs = file("src/main/assets/rootfs.tar.xz")
+      if (!rootfs.exists()) {
         throw GradleException(
-          "缺少运行时快照 assets/snapshot.tar.xz / Missing runtime snapshot assets/snapshot.tar.xz — " +
-            "从上游 Releases（kelai141/dsh-mobile-apk）下载 snapshot-<abi>.tar.xz 后放到 " +
-            "app/src/main/assets/snapshot.tar.xz（见 README.md）。/ " +
-            "Download snapshot-<abi>.tar.xz from the upstream release " +
-            "(kelai141/dsh-mobile-apk) into app/src/main/assets/snapshot.tar.xz (see README.md).",
+          "缺少单运行时 rootfs assets/rootfs.tar.xz / Missing single-runtime rootfs " +
+            "assets/rootfs.tar.xz — 从 dsh-io/dsh-arm64 Releases 下载 " +
+            "dsh-arm64-rootfs-<version>.tar.xz 放到 app/src/main/assets/rootfs.tar.xz " +
+            "（见 README.md）。/ Download dsh-arm64-rootfs-<version>.tar.xz from " +
+            "dsh-io/dsh-arm64 releases into app/src/main/assets/rootfs.tar.xz (see README.md).",
         )
       }
     }
