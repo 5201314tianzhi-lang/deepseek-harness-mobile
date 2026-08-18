@@ -94,14 +94,24 @@ class ProotRuntime(
   }
 
     /**
-   * proot 引擎进程的环境变量：LD_LIBRARY_PATH 同时指向 nativeLibraryDir
-   * （libproot.so + shmem + 标准命名的 libtalloc.so）和 filesDir（镜像出的
-   * libtalloc.so.2），使 proot 的 Android linker 能在 exec 时按 soname
-   * 解析到它全部 DT_NEEDED 依赖。
+   * proot 引擎进程的环境变量。
+   *
+   * - LD_LIBRARY_PATH: 同时指向 nativeLibraryDir（libproot.so + shmem + 标准命名
+   *   libtalloc.so）和 filesDir（镜像出的 libtalloc.so.2），使 proot 的 Android
+   *   linker 能在 exec 时按 soname 解析到它全部 DT_NEEDED 依赖。
+   * - PROOT_TMP_DIR: 指向宿主上真实可写的临时目录。proot 启动时会用它做
+   *   f2fs bug probe 并创建自己的临时文件；若缺失，proot 用 /tmp（容器内/
+   *   宿主不可写）导致 “can't create temporary file” 和 execve ENOSYS。
    */
   fun buildEngineEnv(): Map<String, String> {
     val libPath = nativeLibDir.absolutePath + ":" + context.filesDir.absolutePath
-    return mapOf("LD_LIBRARY_PATH" to libPath)
+    val tmpDir = File(context.cacheDir, "proot-tmp")
+    tmpDir.mkdirs()
+    return mapOf(
+      "LD_LIBRARY_PATH" to libPath,
+      "PROOT_TMP_DIR" to tmpDir.absolutePath,
+      "TMPDIR" to tmpDir.absolutePath,
+    )
   }
 
   /**

@@ -316,7 +316,10 @@ class EngineManager(
     }
     EngineManager.engineProcess = null
     return try {
-      val projectsDir = File(ensureDshDataHome(), DshPaths.PROJECTS_DIR).apply { mkdirs() }
+      // projects 工作目录放宿主私有目录（rootfs 之外），proot 用 -b 把它
+      // bind 进容器 /root/projects。注意 SRC 必须是 rootfs 外的真实宿主路径，
+      // 否则 proot "can't sanitize binding" 报错。
+      val projectsDir = File(context.filesDir, DshPaths.PROJECTS_DIR).apply { mkdirs() }
       val (args, env) = prootRuntime.buildEngineArgs(rootfsDir, projectsDir, port, pickToken)
       engineProcess = startWithArgs(args, env)
       // The cooldown is only set after a real start; a failed path does not
