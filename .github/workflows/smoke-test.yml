@@ -11,8 +11,10 @@ on:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # arm64 runner (M-series): the arm64-v8a emulator image runs natively
+    # under Hypervisor.framework — boots in minutes instead of TCG hours.
+    runs-on: macos-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
