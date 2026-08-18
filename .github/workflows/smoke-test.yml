@@ -1,0 +1,46 @@
+name: smoke-test
+
+# Device-level smoke test: install the released APK on an arm64 emulator and
+# start MainActivity. Catches open-and-crash regressions that unit tests
+# cannot (process startup, WebView init, native/asset failures). Logcat is
+# dumped on failure. arm64 images run under QEMU TCG on x86_64 runners, so
+# boot is slow (10-30 min) — expected.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download latest release APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          asset_url=$(gh api repos/${{ github.repository }}/releases/latest \
+            --jq '.assets[] | select(.name | endswith(".apk")) | .url' | head -1)
+          [ -n "$asset_url" ] || { echo "no apk asset in latest release"; exit 1; }
+          curl -sfL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+            "$asset_url" -o dist/app.apk
+          ls -lh dist/app.apk
+
+      - name: Boot arm64 emulator and start the app
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: arm64-v8a
+          target: google_apis
+          disable-animations: true
+          script: |
+            adb install -r dist/app.apk
+            adb shell am start -W -n com.dshmobile.shell/.MainActivity
+            sleep 20
+            adb logcat -d -s AndroidRuntime:E ActivityManager:E dsh-engine:dsh-applog | tail -120
+            adb shell "run-as com.dshmobile.shell cat files/dsh.log 2>/dev/null | tail -60" || true
+            PID=$(adb shell pidof com.dshmobile.shell | tr -d '\r')
+            echo "app pid=$PID"
+            [ -n "$PID" ] && [ "$PID" != "0" ] || { echo "APP CRASHED OR NOT RUNNING"; exit 1; }
