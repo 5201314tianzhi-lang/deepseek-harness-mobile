@@ -669,9 +669,9 @@ class GuideWizard(
         visibility = View.GONE
       }
     backButton = back
-    (update.layoutParams as LinearLayout.LayoutParams).bottomMargin = sep
-    (reload.layoutParams as LinearLayout.LayoutParams).bottomMargin = sep
-    (keepAlive.layoutParams as LinearLayout.LayoutParams).bottomMargin = sep
+    (update.layoutParams as? LinearLayout.LayoutParams)?.bottomMargin = sep
+    (reload.layoutParams as? LinearLayout.LayoutParams)?.bottomMargin = sep
+    (keepAlive.layoutParams as? LinearLayout.LayoutParams)?.bottomMargin = sep
     val left =
       LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
