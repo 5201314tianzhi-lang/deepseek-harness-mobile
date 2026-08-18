@@ -15,14 +15,15 @@ android {
   defaultConfig {
     applicationId = "com.dshmobile.shell"
     minSdk = 26
-    // targetSdk 34: Android 15+ forbids exec of app-data ELF for targetSdk 35+
-    // (covered by the /system/bin/linker64 fallback in startWithArgs); 34 also
-    // keeps the engine's direct exec working on Android 10-14, where the
-    // untrusted_app domain allows exec of app_data_file (AOSP sepolicy).
-    // Huawei/EMUI devices enforce a stricter W^X (executable files must not
-    // be writable) — handled in SnapshotExtractor by stripping the write bit
-    // from extracted executables.
-    targetSdk = 34
+    // targetSdk 28: on Android 13/MIUI (SELinux Enforcing) an app in the modern
+    // untrusted_app domain is DENIED exec of ELF files inside its own app_data_file
+    // area (the deep /data/user/0/<pkg>/files/rootfs guest binaries). proot 5.1.0
+    // has NO aarch64 loader (src/loader only covers x86_64/x86/arm-EABI), so
+    // PROOT_LOADER cannot bypass this; the only route that works on arm64 is to drop
+    // into the legacy untrusted_app_28 domain, which keeps execute permission on
+    // app_data_file — exactly why the official Termux APK ships targetSdk=28 and its
+    // proot-distro containers run on Android 13.
+    targetSdk = 28
     // Version comes from the release tag in CI (-PversionName/-PversionCode,
     // e.g. v0.1.0 -> 0.1.0 / 100); local builds keep the defaults.
     versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
